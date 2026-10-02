@@ -170,7 +170,13 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         origin TEXT NOT NULL DEFAULT 'direct',
         started_at TEXT,
         finished_at TEXT,
-        created_at TEXT NOT NULL,
+        -- Nullable, unlike created_at on every other table. SQLite cannot add a
+        -- NOT NULL column to a table that already holds rows without inventing a
+        -- value for them, so a NOT NULL here would mean the upgraded database and
+        -- a fresh one disagree. Legacy v2 executions genuinely have no creation
+        -- timestamp distinct from started_at, so NULL is the honest value and the
+        -- executor writes the column on every row it creates.
+        created_at TEXT,
         result_json TEXT,
         error TEXT,
         error_code TEXT
@@ -293,7 +299,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_provenance_events_invocation ON provenance_events(invocation_id)
     """,
     """
-    CREATE INDEX IF NOT EXISTS idx_provenance_events_chain ON provenance_events(task_id, sequence_no)
+    CREATE INDEX IF NOT EXISTS idx_provenance_events_chain
+        ON provenance_events(task_id, sequence_no)
     """,
     """
     CREATE TABLE IF NOT EXISTS evaluation_runs (
@@ -517,7 +524,32 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> bool:
 
     Idempotent, and a no-op on an empty directory: ``init_db`` creates the v3
     shape directly there, so there is nothing to upgrade.
+
+    The whole upgrade is one transaction. :func:`rebuild_plans` and the ``ALTER
+    TABLE`` loop both change schema, and a half-applied upgrade is worse than an
+    unapplied one: ``plans`` would be rebuilt without the ``ADD COLUMN`` pass
+    having run, and the recorded version would still claim v2. If the caller
+    already opened a transaction, this joins it and the caller still owns the
+    commit. If not, this opens and closes its own, so the guarantee does not
+    depend on how the function was reached. ``atlas.storage.db.Database`` relies
+    on exactly that: it drives the upgrade with foreign keys off, which is a
+    no-op inside a transaction and therefore has to happen before one begins.
     """
+
+    if conn.in_transaction:
+        return _upgrade_to_v3(conn)
+    conn.execute("BEGIN")
+    try:
+        changed = _upgrade_to_v3(conn)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+    return changed
+
+
+def _upgrade_to_v3(conn: sqlite3.Connection) -> bool:
+    """The body of :func:`upgrade_to_v3`, run inside a transaction."""
 
     if applied_version(conn) is None and not _table_exists(conn, "plans"):
         return False
@@ -544,6 +576,9 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> bool:
         # The indexes for v3 live in SCHEMA_STATEMENTS, which :func:`init_db`
         # runs immediately after this. Creating them here too would only
         # duplicate the statements.
+        #
+        # The check runs before the commit, so a database that cannot be brought
+        # forward consistently is rolled back whole rather than left upgraded.
         violations = conn.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise SchemaUpgradeError(

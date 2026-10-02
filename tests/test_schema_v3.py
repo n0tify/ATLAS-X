@@ -153,7 +153,7 @@ V2_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE schema_migrations (
         version INTEGER PRIMARY KEY,
-        applied_at TEXT
+        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     )
     """,
 )
@@ -175,7 +175,15 @@ EXPECTED_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "executions",
-        ("plan_id", "plan_step_id", "tool_id", "invocation_id", "origin", "error_code", "created_at"),
+        (
+            "plan_id",
+            "plan_step_id",
+            "tool_id",
+            "invocation_id",
+            "origin",
+            "error_code",
+            "created_at",
+        ),
     ),
     ("artifacts", ("source", "verified", "metadata_json", "created_by")),
     ("verifications", ("artifact_id", "plan_step_id", "verifier_version", "evidence_json")),
@@ -389,25 +397,55 @@ def test_deleting_a_task_still_cascades_to_plans_and_their_steps(tmp_path) -> No
 
 
 def test_an_invocation_id_can_identify_only_one_execution(tmp_path) -> None:
+    """The correlation id is unique, and the database refuses the duplicate.
+
+    Phase 14 threads one ``invocation_id`` through the provenance event, the
+    execution, the failure and the recovery attempt. If two executions could
+    share it, every one of those joins becomes ambiguous and "which run produced
+    this artifact" stops having an answer. A partial unique index is the
+    smallest thing that makes the identifier trustworthy: executions that are
+    not part of a dispatched invocation share NULL, and SQLite's UNIQUE would
+    otherwise reject those too.
+    """
+
     database = Database(tmp_path / "fresh.db")
     database.initialize()
 
     with database.transaction() as conn:
+        # The owner has to exist. This test is about the index, not about
+        # ownership, so it builds a real owner rather than relaxing the foreign
+        # key -- a row that could only be inserted by breaking referential
+        # integrity would not be evidence of anything.
+        conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, updated_at) "
+            "VALUES ('ada', 'hash', 'now', 'now')"
+        )
         conn.execute(
             "INSERT INTO tasks (user_id, title, goal, created_at, updated_at) "
             "VALUES (1, 't', 'g', 'now', 'now')"
         )
-        for invocation in ("inv-1", "inv-1", None, None):
-            conn.execute(
-                "INSERT INTO executions (task_id, status, invocation_id, origin, created_at) "
-                "VALUES (1, 'pending', ?, 'plan_step', 'now')",
-                (invocation,),
-            )
+
+        insert = (
+            "INSERT INTO executions (task_id, status, invocation_id, origin, created_at) "
+            "VALUES (1, 'pending', ?, 'plan_step', 'now')"
+        )
+        conn.execute(insert, ("inv-1",))
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(insert, ("inv-1",))
+
+        # Two rows that share nothing are fine: the index is partial, so a NULL
+        # invocation does not collide with itself.
+        conn.execute(insert, (None,))
+        conn.execute(insert, (None,))
+
         count = conn.execute(
             "SELECT COUNT(*) AS n FROM executions WHERE invocation_id = 'inv-1'"
         ).fetchone()["n"]
-
-    assert count == 1
+        assert count == 1
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM executions WHERE invocation_id IS NULL"
+        ).fetchone()["n"] == 2
 
 
 # ------------------------------------------------------------ idempotence
@@ -476,3 +514,227 @@ def test_a_leftover_upgrade_table_is_refused_rather_than_guessed_at(tmp_path) ->
 
     with pytest.raises(SchemaUpgradeError):
         database.initialize()
+
+
+# ------------------------------------------- referential integrity of the new columns
+
+
+def _populated_v3(tmp_path) -> Database:
+    """A v3 database with one owner, task, plan, step, and execution."""
+
+    database = Database(tmp_path / "populated.db")
+    database.initialize()
+    with database.transaction() as conn:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, updated_at) "
+            "VALUES ('ada', 'hash', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO tasks (user_id, title, goal, created_at, updated_at) "
+            "VALUES (1, 't', 'g', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO plans (task_id, plan_json, created_at, updated_at) "
+            "VALUES (1, '{}', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO plan_steps (plan_id, position, action, created_at, updated_at) "
+            "VALUES (1, 0, 'invoke', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO executions (task_id, status, plan_id, plan_step_id, created_at) "
+            "VALUES (1, 'pending', 1, 1, 'now')"
+        )
+    return database
+
+
+@pytest.mark.parametrize(
+    ("table", "statement"),
+    (
+        (
+            "executions",
+            "INSERT INTO executions (task_id, status, plan_id, created_at) "
+            "VALUES (1, 'pending', 999, 'now')",
+        ),
+        (
+            "executions",
+            "INSERT INTO executions (task_id, status, plan_step_id, created_at) "
+            "VALUES (1, 'pending', 999, 'now')",
+        ),
+        (
+            "verifications",
+            "INSERT INTO verifications (execution_id, verifier, result, artifact_id, created_at) "
+            "VALUES (1, 'v', 'PASS', 999, 'now')",
+        ),
+        (
+            "verifications",
+            "INSERT INTO verifications (execution_id, verifier, result, plan_step_id, created_at) "
+            "VALUES (1, 'v', 'PASS', 999, 'now')",
+        ),
+        (
+            "failures",
+            "INSERT INTO failures (execution_id, category, plan_step_id, created_at) "
+            "VALUES (1, 'TOOL_ERROR', 999, 'now')",
+        ),
+        (
+            "recovery_attempts",
+            "INSERT INTO recovery_attempts (execution_id, attempt_no, failure_id, created_at) "
+            "VALUES (1, 1, 999, 'now')",
+        ),
+        (
+            "provenance_events",
+            "INSERT INTO provenance_events (event_type, actor, plan_id, created_at) "
+            "VALUES ('e', 'user', 999, 'now')",
+        ),
+        (
+            "provenance_events",
+            "INSERT INTO provenance_events (event_type, actor, plan_step_id, created_at) "
+            "VALUES ('e', 'user', 999, 'now')",
+        ),
+    ),
+)
+def test_a_v3_lineage_column_refuses_a_dangling_reference(tmp_path, table, statement) -> None:
+    """Every lineage column added by v3 is a real foreign key, not a loose integer.
+
+    These columns are what let a later phase answer "which plan step produced
+    this artifact". If the reference is not enforced, a wrong answer is
+    storable and the join that would have caught it simply returns nothing,
+    which reads the same as "no such relationship".
+    """
+
+    database = _populated_v3(tmp_path)
+
+    with database.transaction() as conn:
+        before = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+
+    with database.transaction() as conn, pytest.raises(sqlite3.IntegrityError):
+        conn.execute(statement)
+
+    # The refused insert left nothing behind.
+    with database.transaction() as conn:
+        assert conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"] == before
+
+
+def test_deleting_a_plan_leaves_the_execution_that_used_it(tmp_path) -> None:
+    """``plans.plan_id`` is ON DELETE SET NULL, not CASCADE.
+
+    An execution is evidence. Losing it because a plan was tidied away would
+    break provenance for a run that actually happened.
+    """
+
+    database = _populated_v3(tmp_path)
+
+    with database.transaction() as conn:
+        conn.execute("DELETE FROM plans WHERE id = 1")
+
+    with database.transaction() as conn:
+        row = conn.execute(
+            "SELECT task_id, plan_id, plan_step_id FROM executions WHERE id = 1"
+        ).fetchone()
+        assert row["task_id"] == 1
+        assert row["plan_id"] is None
+        assert row["plan_step_id"] is None
+
+
+def test_the_fresh_and_the_upgraded_schema_are_the_same_shape(tmp_path) -> None:
+    """A fresh database and an upgraded one must be semantically identical.
+
+    This is the invariant that lets every later phase write one query instead of
+    branching on how the file got there.
+
+    The comparison is structural rather than textual. ``ALTER TABLE ... ADD
+    COLUMN`` appends, so an upgraded table carries its v3 columns at the end
+    while a fresh one declares them in place -- ``failures.created_at`` is the
+    obvious case. Column order has no meaning in SQLite for any query that names
+    its columns, and this codebase never issues ``SELECT *``, so the difference
+    is cosmetic. What must match is the set of columns with their types,
+    nullability, defaults and primary-key flags, plus every foreign key and
+    index, because those are what can change behaviour.
+    """
+
+    fresh = Database(tmp_path / "fresh.db")
+    fresh.initialize()
+    upgraded = _legacy_database(tmp_path)
+    upgraded.initialize()
+
+    assert _shape(fresh) == _shape(upgraded)
+
+
+def _shape(database: Database) -> dict[str, object]:
+    """A semantic fingerprint of every table, foreign key and index."""
+
+    with database.transaction() as conn:
+        names = [
+            str(row["name"])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        shape: dict[str, object] = {}
+        for name in names:
+            columns = {
+                str(row["name"]): (
+                    str(row["type"]),
+                    int(row["notnull"]),
+                    row["dflt_value"],
+                    int(row["pk"]),
+                )
+                for row in conn.execute(f"PRAGMA table_info({name})")
+            }
+            foreign_keys = sorted(
+                (str(r["table"]), str(r["from"]), str(r["to"]), str(r["on_delete"]))
+                for r in conn.execute(f"PRAGMA foreign_key_list({name})")
+            )
+            indexes = sorted(
+                (str(r["name"]), int(r["unique"]))
+                for r in conn.execute(f"PRAGMA index_list({name})")
+                if not str(r["name"]).startswith("sqlite_autoindex")
+            )
+            shape[name] = (columns, foreign_keys, indexes)
+    return shape
+
+
+# ------------------------------------------------------------- atomicity
+
+
+def test_an_upgrade_that_cannot_finish_leaves_the_database_untouched(tmp_path) -> None:
+    """A refused upgrade must not leave half the schema applied.
+
+    The plans rebuild and the ADD COLUMN pass are one unit. If the second fails,
+    the first must be rolled back too, otherwise the file records version 2 while
+    its plans table is already v3 and the next start refuses to continue.
+    """
+
+    database = _legacy_database(tmp_path)
+
+    with database.transaction() as conn:
+        # Pre-existing damage the post-upgrade foreign_key_check will find: a
+        # step pointing at a plan that does not exist. Written with foreign keys
+        # off because that is the only way to construct the broken state, and
+        # constructing it is the point.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO plan_steps (plan_id, position, action, created_at, updated_at) "
+            "VALUES (999, 0, 'x', 'now', 'now')"
+        )
+        conn.execute("DELETE FROM schema_migrations")
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)")
+
+    with pytest.raises(SchemaUpgradeError):
+        with database.transaction() as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            upgrade_to_v3(conn)
+
+    with database.transaction() as conn:
+        # Still v2, and neither the rebuilt plans table nor the added columns
+        # survived the rollback.
+        assert applied_version(conn) == 2
+
+        def columns(table: str) -> frozenset[str]:
+            rows = conn.execute(f"PRAGMA table_info({table})")
+            return frozenset(str(row["name"]) for row in rows)
+
+        assert "source" not in columns("plans")
+        assert "source" not in columns("plan_steps")
+        assert "tool_id" not in columns("plan_steps")

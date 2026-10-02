@@ -54,19 +54,18 @@ class Database:
         statement in it that is not additive -- the ``plans`` rebuild -- has to
         run with foreign keys off and outside a transaction. See
         :mod:`atlas.storage.migrations` for why both conditions are required.
+
+        ``isolation_level = None`` puts the connection in autocommit so that
+        ``PRAGMA foreign_keys`` and ``BEGIN`` are both statements we issue rather
+        than something the driver decides. The pragma has to be set before the
+        transaction exists, because SQLite ignores it inside one.
         """
 
         conn = self.connect()
         try:
             conn.isolation_level = None
             conn.execute("PRAGMA foreign_keys = OFF")
-            conn.execute("BEGIN")
-            try:
-                upgrade_to_v3(conn)
-            except BaseException:
-                conn.execute("ROLLBACK")
-                raise
-            conn.execute("COMMIT")
+            upgrade_to_v3(conn)
         finally:
             conn.close()
 
