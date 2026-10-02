@@ -186,7 +186,16 @@ class SpyDispatcher:
         self._delay = delay
 
     def dispatch(
-        self, session_token: object, *, tool_id: object, task_id: object, arguments: object
+        self,
+        session_token: object,
+        *,
+        tool_id: object,
+        task_id: object,
+        arguments: object,
+        execution_id: int | None = None,
+        plan_id: int | None = None,
+        plan_step_id: int | None = None,
+        invocation_id: str | None = None,
     ) -> ToolInvocation:
         self.calls.append(
             {"tool_id": tool_id, "task_id": task_id, "arguments": arguments, "token": session_token}
@@ -874,6 +883,10 @@ class TestExecutorFailure:
                 tool_id: object,
                 task_id: object,
                 arguments: object,
+                execution_id: int | None = None,
+                plan_id: int | None = None,
+                plan_step_id: int | None = None,
+                invocation_id: str | None = None,
             ) -> ToolInvocation:
                 raise PermissionDenied(DenyReason.TOOL_NO_GRANT)
 

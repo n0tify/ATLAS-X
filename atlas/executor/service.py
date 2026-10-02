@@ -87,6 +87,7 @@ from atlas.security.errors import AuthorizationError, PermissionDenied
 from atlas.security.policy import DenyReason
 from atlas.security.service import AuthorizationService
 from atlas.storage.execution_repo import ORIGIN_PLAN_STEP
+from atlas.storage.repositories import ProvenanceRepo
 from atlas.storage.task_status import PlanStatus, TaskStatus
 from atlas.tools.dispatch import ToolDispatcher
 from atlas.tools.errors import ToolError
@@ -157,10 +158,12 @@ class ExecutorService:
         authorization: AuthorizationService,
         dispatcher: ToolDispatcher,
         settings: Settings | None = None,
+        provenance: ProvenanceRepo | None = None,
     ) -> None:
         self._auth = authorization
         self._dispatcher = dispatcher
         self._settings = settings or Settings()
+        self._provenance = provenance or ProvenanceRepo()
         # Normalized once so the bound cannot change mid-run and so a caller that
         # passes a Settings-shaped object with a string gets the same refusal.
         self._max_tool_calls = int(self._settings.max_tool_calls)
@@ -424,6 +427,10 @@ class ExecutorService:
                 tool_id=tool_id,
                 task_id=task_id,
                 arguments=step["arguments"],
+                execution_id=execution_id,
+                plan_id=plan["id"],
+                plan_step_id=int(step["id"]),
+                invocation_id=invocation_id,
             )
         except ToolError as exc:
             # The tool's own code, never its message: the message is written for an

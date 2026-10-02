@@ -7,7 +7,15 @@ from atlas.storage.owned_resources import (
     UnsupportedOwnedResource,
     owned_table_for,
 )
-from atlas.storage.repositories import ProvenanceRepo, SessionRepo, TaskRepo, UserRepo
+from atlas.storage.repositories import (
+    ProvenanceEvent,
+    ProvenanceRepo,
+    ProvenanceVerificationCode,
+    ProvenanceVerificationError,
+    SessionRepo,
+    TaskRepo,
+    UserRepo,
+)
 
 #: ``atlas.storage.tool_grants`` is deliberately NOT re-exported here. It
 #: imports ``atlas.security.policy`` for the ``ToolGrant`` contract, and
@@ -21,7 +29,10 @@ __all__ = [
     "UserRepo",
     "SessionRepo",
     "TaskRepo",
+    "ProvenanceEvent",
     "ProvenanceRepo",
+    "ProvenanceVerificationCode",
+    "ProvenanceVerificationError",
     "OwnedResourceRepo",
     "OwnedTable",
     "UnsupportedOwnedResource",

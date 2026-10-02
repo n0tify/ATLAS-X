@@ -145,7 +145,18 @@ class _StubDispatcher:
         self._result = dict(result)
         self.calls = 0
 
-    def dispatch(self, session_token, *, tool_id, task_id, arguments):  # type: ignore[no-untyped-def]
+    def dispatch(
+        self,
+        session_token,
+        *,
+        tool_id,
+        task_id,
+        arguments,
+        execution_id=None,
+        plan_id=None,
+        plan_step_id=None,
+        invocation_id=None,
+    ):  # type: ignore[no-untyped-def]
         from atlas.tools.dispatch import ToolInvocation
 
         self.calls += 1
@@ -522,7 +533,18 @@ class TestVerifierPasses:
                 self._answers = {"first": _text_result("aa"), "second": _text_result("bbb")}
                 self._seen: list[str] = []
 
-            def dispatch(self, session_token, *, tool_id, task_id, arguments):  # type: ignore[no-untyped-def]
+            def dispatch(
+                self,
+                session_token,
+                *,
+                tool_id,
+                task_id,
+                arguments,
+                execution_id=None,
+                plan_id=None,
+                plan_step_id=None,
+                invocation_id=None,
+            ):  # type: ignore[no-untyped-def]
                 from atlas.tools.dispatch import ToolInvocation
 
                 text = str(arguments["text"])

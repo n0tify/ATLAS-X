@@ -18,13 +18,12 @@ No caller-supplied value ever reaches the SQL string; ids are bound parameters.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from atlas.util import utcnow_iso
+from atlas.storage.repositories import ProvenanceRepo
 
 
 def _resource_key(resource: object) -> str | None:
@@ -282,20 +281,19 @@ class OwnedResourceRepo:
         ownership of the target and derives ``task_id`` itself.
         """
 
-        cursor = conn.execute(
-            "INSERT INTO provenance_events "
-            "(task_id, execution_id, event_type, actor, detail_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                task_id,
-                execution_id,
-                event_type,
-                actor,
-                json.dumps(detail) if detail is not None else None,
-                utcnow_iso(),
-            ),
+        # Delegate to the enhanced ProvenanceRepo which handles chain linkage.
+        return ProvenanceRepo().record_event(
+            conn,
+            task_id=task_id,
+            execution_id=execution_id,
+            plan_id=None,
+            plan_step_id=None,
+            tool_id=None,
+            invocation_id=None,
+            event_type=event_type,
+            actor=actor,
+            detail=detail,
         )
-        return _last_insert_id(cursor)
 
 
 def _last_insert_id(cursor: sqlite3.Cursor) -> int:

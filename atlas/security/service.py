@@ -59,7 +59,7 @@ from atlas.storage.owned_resources import (
     owned_table_for,
 )
 from atlas.storage.plan_repo import PlanRepo, PlanWriteInvalid
-from atlas.storage.repositories import TaskRepo
+from atlas.storage.repositories import ProvenanceRepo, TaskRepo
 from atlas.storage.task_status import (
     StatusTransitionRefused,
     TaskStatus,
@@ -115,6 +115,7 @@ class AuthorizationService:
         plans: PlanRepo | None = None,
         executions: ExecutionRepo | None = None,
         verifications: VerificationRepo | None = None,
+        provenance: ProvenanceRepo | None = None,
         owned: OwnedResourceRepo | None = None,
         tool_grants: ToolGrantSource | None = None,
     ) -> None:
@@ -125,6 +126,7 @@ class AuthorizationService:
         self._plans = plans or PlanRepo()
         self._executions = executions or ExecutionRepo()
         self._verifications = verifications or VerificationRepo()
+        self._provenance = provenance or ProvenanceRepo()
         self._owned = owned or OwnedResourceRepo()
         self._tool_grants = tool_grants
 
@@ -567,7 +569,7 @@ class AuthorizationService:
                         DenyReason.DUPLICATE_EXECUTION,
                     )
             try:
-                return self._executions.create(
+                execution_id = self._executions.create(
                     conn,
                     task_id=tid,
                     plan_id=pid,
@@ -582,6 +584,22 @@ class AuthorizationService:
                     "execution write refused user_id=%s detail=%s", identity.user_id, exc
                 )
                 raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+            # Record execution started in the provenance chain, within the same
+            # transaction that created the execution row.
+            self._provenance.record_event(
+                conn,
+                task_id=tid,
+                execution_id=execution_id,
+                plan_id=pid,
+                plan_step_id=plan_step_id,
+                tool_id=tool_id,
+                invocation_id=invocation_id,
+                event_type="execution_started",
+                actor="executor",
+                detail={"origin": origin, "attempt": attempt},
+            )
+            return execution_id
 
     def end_execution(
         self,
@@ -627,16 +645,30 @@ class AuthorizationService:
             try:
                 if result is not None:
                     self._executions.complete(conn, execution_id=eid, result=result)
+                    event_type = "execution_completed"
+                    detail = {"status": "succeeded"}
                 else:
                     assert error_code is not None
                     self._executions.fail(
                         conn, execution_id=eid, error_code=error_code, error=error
                     )
+                    event_type = "execution_failed"
+                    detail = {"status": "failed", "error_code": error_code}
             except ExecutionWriteInvalid as exc:
                 logger.warning(
                     "execution close refused user_id=%s detail=%s", identity.user_id, exc
                 )
                 raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+            # Record execution completion in the provenance chain.
+            self._provenance.record_event(
+                conn,
+                task_id=int(row["task_id"]),
+                execution_id=eid,
+                event_type=event_type,
+                actor="executor",
+                detail=detail,
+            )
 
     def mark_plan_step(
         self, session_token: object, plan_step_id: object, *, status: str

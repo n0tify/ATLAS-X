@@ -62,6 +62,7 @@ from atlas.security.policy import MAX_RESOURCE_ID, Resource
 from atlas.security.service import AuthorizationService
 from atlas.storage.db import Database
 from atlas.storage.owned_resources import OwnedResourceRepo
+from atlas.storage.repositories import ProvenanceRepo
 from atlas.tools.context import OwnedTaskView
 from atlas.tools.definition import ProvenanceField, ToolDefinition
 from atlas.tools.errors import (
@@ -227,6 +228,7 @@ class ToolDispatcher:
         limits: DispatchLimits | None = None,
         view: OwnedTaskView | None = None,
         owned: OwnedResourceRepo | None = None,
+        provenance: ProvenanceRepo | None = None,
         sandbox: SandboxSupervisor | None = None,
     ) -> None:
         if not registry.frozen:
@@ -238,6 +240,7 @@ class ToolDispatcher:
         self._registry = registry
         self._limits = limits or DispatchLimits()
         self._view = view or OwnedTaskView(db, owned)
+        self._provenance = provenance or ProvenanceRepo()
         # Injected rather than constructed here so the dispatcher stays
         # constructible in a test with a stub configuration, but there is no
         # in-process implementation to inject: the parameter is a supervisor, not
@@ -271,6 +274,10 @@ class ToolDispatcher:
         tool_id: object,
         task_id: object,
         arguments: object,
+        execution_id: int | None = None,
+        plan_id: int | None = None,
+        plan_step_id: int | None = None,
+        invocation_id: str | None = None,
     ) -> ToolInvocation:
         """Authorize, validate, run, and record one tool invocation.
 
@@ -296,6 +303,11 @@ class ToolDispatcher:
         # budget must not be able to grow the audit table by dispatching again.
         self._record_event(
             task_id=task,
+            execution_id=execution_id,
+            plan_id=plan_id,
+            plan_step_id=plan_step_id,
+            tool_id=definition.tool_id,
+            invocation_id=invocation_id,
             event_type=TOOL_INVOKED_EVENT,
             detail=self._attempt_record(definition, identity.user_id, task),
         )
@@ -349,7 +361,14 @@ class ToolDispatcher:
                 elapsed_ms=elapsed_ms,
             )
             event_id = self._record_event(
-                task_id=task, event_type=TOOL_COMPLETED_EVENT, detail=record
+                task_id=task,
+                execution_id=execution_id,
+                plan_id=plan_id,
+                plan_step_id=plan_step_id,
+                tool_id=definition.tool_id,
+                invocation_id=invocation_id,
+                event_type=TOOL_COMPLETED_EVENT,
+                detail=record,
             )
             return ToolInvocation(
                 tool_id=definition.tool_id,
@@ -367,6 +386,11 @@ class ToolDispatcher:
                 definition=definition,
                 user_id=identity.user_id,
                 task_id=task,
+                execution_id=execution_id,
+                plan_id=plan_id,
+                plan_step_id=plan_step_id,
+                tool_id=definition.tool_id,
+                invocation_id=invocation_id,
                 started_at=started_at,
                 elapsed_ms=int((time.monotonic() - monotonic_start) * 1000),
                 error_code=exc.code,
@@ -568,6 +592,11 @@ class ToolDispatcher:
         definition: ToolDefinition,
         user_id: int,
         task_id: int,
+        execution_id: int | None,
+        plan_id: int | None,
+        plan_step_id: int | None,
+        tool_id: str | None,
+        invocation_id: str | None,
         started_at: str,
         elapsed_ms: int,
         error_code: str,
@@ -582,6 +611,11 @@ class ToolDispatcher:
         try:
             self._record_event(
                 task_id=task_id,
+                execution_id=execution_id,
+                plan_id=plan_id,
+                plan_step_id=plan_step_id,
+                tool_id=tool_id or definition.tool_id,
+                invocation_id=invocation_id,
                 event_type=TOOL_COMPLETED_EVENT,
                 detail={
                     ProvenanceField.TOOL_ID.value: definition.tool_id,
@@ -600,16 +634,27 @@ class ToolDispatcher:
             logger.exception("could not record tool failure provenance")
 
     def _record_event(
-        self, *, task_id: int, event_type: str, detail: Mapping[str, Any]
+        self,
+        *,
+        task_id: int,
+        execution_id: int | None,
+        plan_id: int | None,
+        plan_step_id: int | None,
+        tool_id: str | None,
+        invocation_id: str | None,
+        event_type: str,
+        detail: Mapping[str, Any],
     ) -> int:
         with self._db.transaction() as conn:
-            cursor = conn.execute(
-                "INSERT INTO provenance_events "
-                "(task_id, execution_id, event_type, actor, detail_json, created_at) "
-                "VALUES (?, NULL, ?, ?, ?, ?)",
-                (task_id, event_type, TOOL_ACTOR, canonical_json(detail), utcnow_iso()),
+            return self._provenance.record_event(
+                conn,
+                task_id=task_id,
+                execution_id=execution_id,
+                plan_id=plan_id,
+                plan_step_id=plan_step_id,
+                tool_id=tool_id,
+                invocation_id=invocation_id,
+                event_type=event_type,
+                actor=TOOL_ACTOR,
+                detail=detail,
             )
-            event_id = cursor.lastrowid
-            if event_id is None:
-                raise RuntimeError("provenance insert returned no row id")
-        return int(event_id)
