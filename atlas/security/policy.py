@@ -77,16 +77,24 @@ class DenyReason(str, Enum):
 
 
 #: Operations permitted to an authenticated owner. Anything not listed is denied.
-#: Deliberately minimal: Phase 08 authorizes only operations that have an
-#: enforcement point today. There is no ``update`` anywhere and no tool invoke
-#: against a stored resource, because no such code path exists yet.
+#: The list grows only when an enforcement point for the operation exists in this
+#: codebase, and each addition names the phase that added it:
+#:
+#: * Phase 11 added ``PLAN.CREATE`` and ``PLAN_STEP.APPEND`` for
+#:   :meth:`~atlas.security.service.AuthorizationService.create_plan`, which
+#:   persists a validated or rejected plan and its steps in the transaction that
+#:   checked ownership of the task.
+#:
+#: Still absent, and still deliberate: there is no ``update`` anywhere. Nothing in
+#: Phases 11-16 edits a stored row in place, so permitting one would be a grant
+#: with no enforcement point behind it.
 PERMITTED_OPERATIONS: MappingProxyType[Resource, frozenset[Operation]] = MappingProxyType(
     {
         Resource.TASK: frozenset(
             {Operation.CREATE, Operation.READ, Operation.DELETE, Operation.APPEND}
         ),
-        Resource.PLAN: frozenset({Operation.READ}),
-        Resource.PLAN_STEP: frozenset({Operation.READ}),
+        Resource.PLAN: frozenset({Operation.READ, Operation.CREATE}),
+        Resource.PLAN_STEP: frozenset({Operation.READ, Operation.APPEND}),
         Resource.EXECUTION: frozenset({Operation.READ, Operation.APPEND}),
         Resource.ARTIFACT: frozenset({Operation.READ}),
         Resource.VERIFICATION: frozenset({Operation.READ}),
