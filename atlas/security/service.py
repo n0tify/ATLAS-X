@@ -28,6 +28,7 @@ access to any host path, and this service performs no path validation.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any, Mapping, NoReturn, Sequence
 
 from atlas.auth.service import AuthService
@@ -49,6 +50,7 @@ from atlas.security.policy import (
     is_valid_resource_id,
 )
 from atlas.storage.db import Database
+from atlas.storage.execution_repo import ExecutionRepo, ExecutionWriteInvalid
 from atlas.storage.owned_resources import (
     OwnedResourceRepo,
     UnsupportedOwnedResource,
@@ -56,6 +58,8 @@ from atlas.storage.owned_resources import (
 )
 from atlas.storage.plan_repo import PlanRepo, PlanWriteInvalid
 from atlas.storage.repositories import TaskRepo
+from atlas.storage.task_status import check_task_transition
+from atlas.util import utcnow_iso
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,7 @@ class AuthorizationService:
         identities: IdentityResolver | None = None,
         tasks: TaskRepo | None = None,
         plans: PlanRepo | None = None,
+        executions: ExecutionRepo | None = None,
         owned: OwnedResourceRepo | None = None,
         tool_grants: ToolGrantSource | None = None,
     ) -> None:
@@ -95,6 +100,7 @@ class AuthorizationService:
         self._identities = identities or IdentityResolver(db, auth)
         self._tasks = tasks or TaskRepo()
         self._plans = plans or PlanRepo()
+        self._executions = executions or ExecutionRepo()
         self._owned = owned or OwnedResourceRepo()
         self._tool_grants = tool_grants
 
@@ -255,6 +261,270 @@ class AuthorizationService:
                     identity, Resource.PLAN_STEP, Operation.READ, DenyReason.RESOURCE_NOT_OWNED
                 )
             return self._plans.steps_for_plan(conn, pid)
+
+    def set_task_status(
+        self, session_token: object, task_id: object, *, status: str
+    ) -> dict[str, Any]:
+        """Move a task to ``status``, refusing a transition that does not exist.
+
+        The transition table is checked here rather than in the caller, so a
+        status that cannot be reached is refused at the boundary that owns writes
+        and not merely avoided by whichever component happened to be correct.
+        """
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.TASK, Operation.UPDATE)
+        with self._db.transaction() as conn:
+            row = self._tasks.get(conn, identity.user_id, tid)
+            if row is None:
+                self._deny(identity, Resource.TASK, Operation.UPDATE, DenyReason.RESOURCE_NOT_OWNED)
+            current = str(row["status"])
+            # Not a denial and not swallowed: the caller owns the task, it asked
+            # for a move the lifecycle does not have, and
+            # StatusTransitionRefused carries both statuses for the caller to log
+            # or surface. Wrapping it in an authorization error would claim the
+            # policy refused a move that policy never had an opinion about.
+            check_task_transition(current, status)
+            conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (status, utcnow_iso(), tid, identity.user_id),
+            )
+            updated = self._tasks.get(conn, identity.user_id, tid)
+        if updated is None:
+            raise RuntimeError("task disappeared during a status update")
+        return updated
+
+    def begin_execution(
+        self,
+        session_token: object,
+        *,
+        task_id: object,
+        plan_id: object,
+        plan_step_id: int | None,
+        tool_id: str | None,
+        invocation_id: str | None,
+        origin: str,
+        max_concurrent: int,
+        attempt: int = 1,
+    ) -> int:
+        """Open one dispatch row, refusing a task that is already running.
+
+        The duplicate check and the insert share this transaction, so two
+        concurrent callers cannot both observe "no execution in flight" and both
+        proceed. ``max_concurrent`` is a count, not a boolean, and the query is
+        capped by it rather than materializing every in-flight row.
+
+        A refusal here is a genuine authorization outcome, not a tool failure: the
+        caller owns the task but may not run it twice at once.
+        """
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        pid = self._as_id(plan_id, Resource.PLAN)
+        self._permit(identity, Resource.EXECUTION, Operation.APPEND)
+        self._permit(identity, Resource.TASK, Operation.UPDATE)
+
+        def deny_not_owned() -> NoReturn:
+            self._deny(
+                identity,
+                Resource.EXECUTION,
+                Operation.APPEND,
+                DenyReason.RESOURCE_NOT_OWNED,
+            )
+
+        with self._db.transaction() as conn:
+            if self._tasks.get(conn, identity.user_id, tid) is None:
+                deny_not_owned()
+            owned_plan = self._owned.get_owned(
+                conn, resource=Resource.PLAN, user_id=identity.user_id, resource_id=pid
+            )
+            # A plan the caller does not own, and a plan that belongs to a
+            # different task, are both refused the same way. Accepting the second
+            # would let a caller execute one of its own plans against someone
+            # else's task, which ownership alone does not prevent.
+            if owned_plan is None or owned_plan["task_id"] != tid:
+                deny_not_owned()
+            if (
+                isinstance(max_concurrent, bool)
+                or not isinstance(max_concurrent, int)
+                or max_concurrent < 1
+            ):
+                raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER)
+            in_flight = self._executions.in_flight_for_task(
+                conn, task_id=tid, limit=max_concurrent
+            )
+            if len(in_flight) >= max_concurrent:
+                # Counted from storage, inside the transaction that writes the row.
+                # A process-local lock would not see a second ATLAS-X process on
+                # the same database, which is the case the setting exists for.
+                self._deny(
+                    identity,
+                    Resource.EXECUTION,
+                    Operation.APPEND,
+                    DenyReason.DUPLICATE_EXECUTION,
+                )
+            if invocation_id is not None:
+                already = conn.execute(
+                    "SELECT 1 FROM executions WHERE invocation_id = ?", (invocation_id,)
+                ).fetchone()
+                if already is not None:
+                    # A denial rather than an error: the caller owns everything
+                    # involved and still may not do this. The unique index would
+                    # refuse the insert too, but reporting it here means the caller
+                    # learns *why* rather than that a constraint fired, and it is
+                    # why `invocation_id` is the correlation key recovery uses to
+                    # avoid replaying a dispatch.
+                    self._deny(
+                        identity,
+                        Resource.EXECUTION,
+                        Operation.APPEND,
+                        DenyReason.DUPLICATE_EXECUTION,
+                    )
+            try:
+                return self._executions.create(
+                    conn,
+                    task_id=tid,
+                    plan_id=pid,
+                    plan_step_id=plan_step_id,
+                    tool_id=tool_id,
+                    invocation_id=invocation_id,
+                    origin=origin,
+                    attempt=attempt,
+                )
+            except ExecutionWriteInvalid as exc:
+                logger.warning(
+                    "execution write refused user_id=%s detail=%s", identity.user_id, exc
+                )
+                raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+    def end_execution(
+        self,
+        session_token: object,
+        execution_id: object,
+        *,
+        result: Mapping[str, Any] | None = None,
+        error_code: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Close a dispatch row as succeeded or failed.
+
+        Exactly one of ``result`` and ``error_code`` may be given. The
+        alternatives are not interchangeable: an execution cannot succeed with no
+        output, and it cannot fail without a stable code for Phase 15 to classify.
+        The check is here because this is the only path that closes a row.
+        """
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.EXECUTION, Operation.UPDATE)
+        if (result is None) == (error_code is None):
+            raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER)
+        with self._db.transaction() as conn:
+            row = self._executions.get(conn, eid)
+            if row is not None:
+                # An execution has no user_id column; ownership is the task's, so
+                # a caller closes only rows reached through a task they own.
+                self._require_owned_task(
+                    conn,
+                    identity,
+                    int(row["task_id"]),
+                    resource=Resource.EXECUTION,
+                    operation=Operation.UPDATE,
+                )
+            if row is None:
+                self._deny(
+                    identity,
+                    Resource.EXECUTION,
+                    Operation.UPDATE,
+                    DenyReason.RESOURCE_NOT_OWNED,
+                )
+            try:
+                if result is not None:
+                    self._executions.complete(conn, execution_id=eid, result=result)
+                else:
+                    assert error_code is not None
+                    self._executions.fail(
+                        conn, execution_id=eid, error_code=error_code, error=error
+                    )
+            except ExecutionWriteInvalid as exc:
+                logger.warning(
+                    "execution close refused user_id=%s detail=%s", identity.user_id, exc
+                )
+                raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+    def mark_plan_step(
+        self, session_token: object, plan_step_id: object, *, status: str
+    ) -> None:
+        """Record a step's outcome on its plan step row."""
+
+        identity = self.authenticate(session_token)
+        sid = self._as_id(plan_step_id, Resource.PLAN_STEP)
+        self._permit(identity, Resource.PLAN_STEP, Operation.UPDATE)
+        with self._db.transaction() as conn:
+            if (
+                self._owned.get_owned(
+                    conn,
+                    resource=Resource.PLAN_STEP,
+                    user_id=identity.user_id,
+                    resource_id=sid,
+                )
+                is None
+            ):
+                self._deny(
+                    identity,
+                    Resource.PLAN_STEP,
+                    Operation.UPDATE,
+                    DenyReason.RESOURCE_NOT_OWNED,
+                )
+            try:
+                self._executions.mark_plan_step(conn, plan_step_id=sid, status=status)
+            except ExecutionWriteInvalid as exc:
+                logger.warning(
+                    "plan step write refused user_id=%s detail=%s", identity.user_id, exc
+                )
+                raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+    def executions_for_task(
+        self, session_token: object, task_id: object
+    ) -> list[dict[str, Any]]:
+        """Every dispatch row for a task the caller owns, in insertion order."""
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.EXECUTION, Operation.READ)
+        with self._db.transaction() as conn:
+            self._require_owned_task(
+                conn,
+                identity,
+                tid,
+                resource=Resource.EXECUTION,
+                operation=Operation.READ,
+            )
+            return self._executions.for_task(conn, tid)
+
+    def in_flight_executions(
+        self, session_token: object, task_id: object
+    ) -> list[dict[str, Any]]:
+        """In-flight dispatches for a task the caller owns.
+
+        A read, not a reservation. Deciding whether a run may start belongs to
+        :meth:`begin_execution`, which re-checks inside the transaction that writes
+        the row; this exists so a caller can *display* that a task is busy.
+        """
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.EXECUTION, Operation.READ)
+        with self._db.transaction() as conn:
+            self._require_owned_task(
+                conn,
+                identity,
+                tid,
+                resource=Resource.EXECUTION,
+                operation=Operation.READ,
+            )
+            return self._executions.in_flight_for_task(conn, task_id=tid, limit=64)
 
     def get_owned_resource(
         self, session_token: object, *, resource: object, resource_id: object
@@ -443,6 +713,26 @@ class AuthorizationService:
         )
         if not decision.allowed:
             self._deny(identity, resource, operation, decision.reason)
+
+    def _require_owned_task(
+        self,
+        conn: sqlite3.Connection,
+        identity: Identity,
+        task_id: int,
+        *,
+        resource: Resource,
+        operation: Operation,
+    ) -> None:
+        """Deny unless ``task_id`` is a task ``identity`` owns.
+
+        Takes the caller's open connection rather than opening one, because the
+        whole point is that this check and the write it guards commit or roll back
+        together. Re-reading ownership in a second transaction would leave a window
+        where a delete between the two leaves a write authorized against nothing.
+        """
+
+        if self._tasks.get(conn, identity.user_id, task_id) is None:
+            self._deny(identity, resource, operation, DenyReason.RESOURCE_NOT_OWNED)
 
     def _deny(
         self,

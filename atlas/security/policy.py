@@ -70,6 +70,7 @@ class DenyReason(str, Enum):
     RESOURCE_NOT_FOUND = "resource_not_found"
     RESOURCE_NOT_OWNED = "resource_not_owned"
     RESOURCE_OWNERSHIP_UNDECIDED = "resource_ownership_undecided"
+    DUPLICATE_EXECUTION = "duplicate_execution"
     TOOL_NO_REGISTRY = "tool_no_registry"
     TOOL_UNKNOWN = "tool_unknown"
     TOOL_NO_GRANT = "tool_no_grant"
@@ -84,18 +85,30 @@ class DenyReason(str, Enum):
 #:   :meth:`~atlas.security.service.AuthorizationService.create_plan`, which
 #:   persists a validated or rejected plan and its steps in the transaction that
 #:   checked ownership of the task.
+#: * Phase 12 added ``TASK.UPDATE`` for the task status the executor writes, and
+#:   ``EXECUTION.UPDATE`` for closing a dispatch row the executor already opened.
+#:   ``EXECUTION.APPEND`` and ``PLAN_STEP.UPDATE`` were already permitted, but
+#:   nothing wrote them before; the enforcement points now exist.
 #:
-#: Still absent, and still deliberate: there is no ``update`` anywhere. Nothing in
-#: Phases 11-16 edits a stored row in place, so permitting one would be a grant
-#: with no enforcement point behind it.
+#: ``UPDATE`` remains absent for every resource Phase 12 does not own. A caller
+#: still cannot edit a plan, an artifact, a verification, or a failure, and
+#: ``create_plan`` is the only path that writes a plan row.
 PERMITTED_OPERATIONS: MappingProxyType[Resource, frozenset[Operation]] = MappingProxyType(
     {
         Resource.TASK: frozenset(
-            {Operation.CREATE, Operation.READ, Operation.DELETE, Operation.APPEND}
+            {
+                Operation.CREATE,
+                Operation.READ,
+                Operation.DELETE,
+                Operation.APPEND,
+                Operation.UPDATE,
+            }
         ),
         Resource.PLAN: frozenset({Operation.READ, Operation.CREATE}),
-        Resource.PLAN_STEP: frozenset({Operation.READ, Operation.APPEND}),
-        Resource.EXECUTION: frozenset({Operation.READ, Operation.APPEND}),
+        Resource.PLAN_STEP: frozenset({Operation.READ, Operation.APPEND, Operation.UPDATE}),
+        Resource.EXECUTION: frozenset(
+            {Operation.READ, Operation.APPEND, Operation.UPDATE}
+        ),
         Resource.ARTIFACT: frozenset({Operation.READ}),
         Resource.VERIFICATION: frozenset({Operation.READ}),
         Resource.FAILURE: frozenset({Operation.READ}),

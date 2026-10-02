@@ -505,25 +505,69 @@ def test_task_ownership_cannot_be_reassigned_by_any_repository() -> None:
 def test_authentication_does_not_imply_update_permission(
     authz: AuthorizationService, auth: AuthService
 ) -> None:
+    """Authentication decides who you are, not what you may change.
+
+    Rewritten in Phase 12. The claim is no longer "there is no update anywhere" --
+    ``TASK.UPDATE`` and ``PLAN_STEP.UPDATE`` were added deliberately, each with an
+    enforcement point in
+    :class:`~atlas.security.service.AuthorizationService`. What has to keep holding
+    is that an update is permitted only where one of those enforcement points
+    exists, and that the decision comes from the operation table rather than from
+    the caller having a session.
+    """
+
     _register(auth, "alice")
     token = _token(auth, "alice")
     task = authz.create_task(token, title="a", goal="g")
     assert authz.get_task(token, task["id"])
-    decision = decide_operation(
-        identity_id=1, resource=Resource.TASK, operation=Operation.UPDATE
+    for resource in (
+        Resource.PLAN,
+        Resource.ARTIFACT,
+        Resource.VERIFICATION,
+        Resource.FAILURE,
+    ):
+        decision = decide_operation(
+            identity_id=1, resource=resource, operation=Operation.UPDATE
+        )
+        assert not decision.allowed
+        assert decision.reason is DenyReason.OPERATION_NOT_PERMITTED
+
+
+def test_only_the_phase_12_updates_are_permitted() -> None:
+    """The whole set of update permissions, enumerated.
+
+    Written as an equality against the complete set rather than as three passing
+    assertions, so adding an ``UPDATE`` anywhere else has to be a deliberate edit
+    here instead of something a reviewer has to notice.
+
+    Three resources are updatable, and each one is updatable for a reason that is
+    not "it seemed reasonable":
+
+    * ``TASK`` -- the executor moves a task through the lifecycle.
+    * ``PLAN_STEP`` -- the executor records a step's outcome.
+    * ``EXECUTION`` -- the executor closes a dispatch row it opened.
+    """
+
+    permitted_updates = {
+        resource
+        for resource, operations in PERMITTED_OPERATIONS.items()
+        if Operation.UPDATE in operations
+    }
+    assert permitted_updates == frozenset(
+        {Resource.TASK, Resource.PLAN_STEP, Resource.EXECUTION}
     )
-    assert not decision.allowed
-    assert decision.reason is DenyReason.OPERATION_NOT_PERMITTED
 
 
 @pytest.mark.parametrize(
     ("resource", "operation"),
     [
-        (Resource.TASK, Operation.UPDATE),
+        # TASK.UPDATE and PLAN_STEP.UPDATE moved out of this list in Phase 12;
+        # they are pinned by test_only_the_phase_12_updates_are_permitted. Every
+        # other denial below is unchanged and must keep failing closed.
         (Resource.ARTIFACT, Operation.CREATE),
         (Resource.ARTIFACT, Operation.DELETE),
         (Resource.PLAN, Operation.DELETE),
-        (Resource.PLAN_STEP, Operation.UPDATE),
+        (Resource.PLAN, Operation.UPDATE),
         (Resource.PROVENANCE_EVENT, Operation.APPEND),
         (Resource.VERIFICATION, Operation.DELETE),
         (Resource.FAILURE, Operation.UPDATE),
