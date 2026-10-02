@@ -27,6 +27,7 @@ access to any host path, and this service performs no path validation.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from typing import Any, Mapping, NoReturn, Sequence
@@ -36,6 +37,7 @@ from atlas.security.errors import (
     AuthorizationError,
     InvalidAuthorizationRequest,
     PermissionDenied,
+    ResultUnpublishable,
 )
 from atlas.security.identity import Identity, IdentityResolver
 from atlas.security.policy import (
@@ -58,7 +60,12 @@ from atlas.storage.owned_resources import (
 )
 from atlas.storage.plan_repo import PlanRepo, PlanWriteInvalid
 from atlas.storage.repositories import TaskRepo
-from atlas.storage.task_status import check_task_transition
+from atlas.storage.task_status import (
+    StatusTransitionRefused,
+    TaskStatus,
+    check_task_transition,
+)
+from atlas.storage.verification_repo import VerificationRepo, VerificationWriteInvalid
 from atlas.util import utcnow_iso
 
 logger = logging.getLogger(__name__)
@@ -79,6 +86,21 @@ _MALFORMED_REASONS = frozenset(
 
 _IDENTITY_REASONS = frozenset({DenyReason.MISSING_IDENTITY, DenyReason.INVALID_IDENTITY})
 
+#: Bound on the serialized task result. Generous enough for a Phase 18 report and
+#: tight enough that a task row cannot be turned into a blob store. Refused rather
+#: than truncated: a truncated report that still reads as a result is worse than a
+#: visible refusal.
+MAX_TASK_RESULT_CHARS = 1_000_000
+
+
+def _encode_result(result: Mapping[str, Any]) -> str:
+    """Serialize a task result under the size bound, or refuse."""
+
+    encoded = json.dumps(dict(result), ensure_ascii=True, sort_keys=True, default=str)
+    if len(encoded) > MAX_TASK_RESULT_CHARS:
+        raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER)
+    return encoded
+
 
 class AuthorizationService:
     """Owner-scoped, operation-scoped, deny-by-default access to user data."""
@@ -92,6 +114,7 @@ class AuthorizationService:
         tasks: TaskRepo | None = None,
         plans: PlanRepo | None = None,
         executions: ExecutionRepo | None = None,
+        verifications: VerificationRepo | None = None,
         owned: OwnedResourceRepo | None = None,
         tool_grants: ToolGrantSource | None = None,
     ) -> None:
@@ -101,6 +124,7 @@ class AuthorizationService:
         self._tasks = tasks or TaskRepo()
         self._plans = plans or PlanRepo()
         self._executions = executions or ExecutionRepo()
+        self._verifications = verifications or VerificationRepo()
         self._owned = owned or OwnedResourceRepo()
         self._tool_grants = tool_grants
 
@@ -293,6 +317,167 @@ class AuthorizationService:
             updated = self._tasks.get(conn, identity.user_id, tid)
         if updated is None:
             raise RuntimeError("task disappeared during a status update")
+        return updated
+
+    def record_verification(
+        self,
+        session_token: object,
+        *,
+        execution_id: object,
+        result: str,
+        verifier: str,
+        verifier_version: str,
+        detail: Mapping[str, Any] | None = None,
+        evidence: Mapping[str, Any] | None = None,
+        plan_step_id: int | None = None,
+        artifact_id: int | None = None,
+    ) -> int:
+        """Record one verification verdict against an execution.
+
+        Create-only by policy: ``atlas.security`` grants the verifier no
+        ``update`` or ``delete`` on this resource, so a verdict written here
+        cannot be revised through any path in this codebase.
+
+        Ownership is the execution's task's, and it is checked inside the same
+        transaction that inserts the row -- so a verdict cannot land against an
+        execution belonging to somebody else's task, not even transiently.
+        """
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.VERIFICATION, Operation.CREATE)
+        with self._db.transaction() as conn:
+            row = self._executions.get(conn, eid)
+            if row is None:
+                self._deny(
+                    identity,
+                    Resource.VERIFICATION,
+                    Operation.CREATE,
+                    DenyReason.RESOURCE_NOT_OWNED,
+                )
+            self._require_owned_task(
+                conn,
+                identity,
+                int(row["task_id"]),
+                resource=Resource.VERIFICATION,
+                operation=Operation.CREATE,
+            )
+            try:
+                return self._verifications.create(
+                    conn,
+                    execution_id=eid,
+                    result=result,
+                    verifier=verifier,
+                    verifier_version=verifier_version,
+                    detail=detail,
+                    evidence=evidence,
+                    plan_step_id=plan_step_id,
+                    artifact_id=artifact_id,
+                )
+            except VerificationWriteInvalid as exc:
+                # Not a denial: the caller owns the execution and the verdict was
+                # structurally impossible. Surfaced as an invalid request so it
+                # cannot reach a client as a silent success.
+                logger.warning(
+                    "verification write refused user_id=%s execution_id=%s detail=%s",
+                    identity.user_id,
+                    eid,
+                    exc,
+                )
+                raise InvalidAuthorizationRequest(DenyReason.UNSUPPORTED_FILTER) from exc
+
+    def verifications_for_task(
+        self, session_token: object, task_id: object
+    ) -> list[dict[str, Any]]:
+        """Every verdict on a task the caller owns, oldest first.
+
+        The read side of the create-only policy: a caller may see what was
+        verified for their own task and may not alter any of it.
+        """
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.VERIFICATION, Operation.READ)
+        with self._db.transaction() as conn:
+            self._require_owned_task(
+                conn,
+                identity,
+                tid,
+                resource=Resource.VERIFICATION,
+                operation=Operation.READ,
+            )
+            return self._verifications.for_task(conn, tid)
+
+    def finish_verified_task(
+        self, session_token: object, task_id: object, *, result: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Mark a ``verified`` task ``succeeded`` and write its result.
+
+        The one place ``tasks.result_json`` and ``tasks.verified_at`` are written,
+        and the one place a task may become successful.
+
+        Two independent conditions must both hold, and the second is the one that
+        carries the weight:
+
+        1. The task is already ``verified``. Since Phase 13 removed the
+           ``executed → verified`` edge, ``verified`` is reachable only from
+           ``verifying``, so this is not a formality -- but it is the weaker of
+           the two, because a status is a single free-text column.
+        2. **Every execution of the task carries a recorded PASS.** Checked here
+           rather than trusted from the caller, and counted against the total
+           number of executions rather than merely being non-zero. A task whose
+           executions all passed still has nothing verified if one of them was
+           never looked at, and that is the exact shape of the bug this closes:
+           a status column is a claim, the verdict rows are the evidence for it.
+
+        Condition 2 is what makes this method safe to call directly. A caller that
+        skipped the verifier and walked the task to ``verified`` by hand would
+        satisfy (1) and fail (2).
+
+        ``result`` is written in the same transaction as the status change.
+        Writing them separately would leave a window where the task reads
+        ``succeeded`` with no result, or carries a result while still ``verified``.
+        """
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.TASK, Operation.UPDATE)
+        encoded = _encode_result(result)
+        with self._db.transaction() as conn:
+            row = self._tasks.get(conn, identity.user_id, tid)
+            if row is None:
+                self._deny(identity, Resource.TASK, Operation.UPDATE, DenyReason.RESOURCE_NOT_OWNED)
+            if str(row["status"]) != TaskStatus.VERIFIED.value:
+                raise StatusTransitionRefused(
+                    current=str(row["status"]), requested=TaskStatus.SUCCEEDED.value
+                )
+            passed, total = self._verifications.pass_coverage_for_task(conn, tid)
+            if total == 0 or passed != total:
+                # No executions at all, or at least one without a PASS. Either way
+                # there is no verified output behind the result being asked for.
+                logger.warning(
+                    "result withheld user_id=%s task_id=%s passed=%s total=%s",
+                    identity.user_id,
+                    tid,
+                    passed,
+                    total,
+                )
+                raise ResultUnpublishable()
+            conn.execute(
+                "UPDATE tasks SET status = ?, result_json = ?, verified_at = ?, updated_at = ? "
+                "WHERE id = ? AND user_id = ?",
+                (
+                    TaskStatus.SUCCEEDED.value,
+                    encoded,
+                    utcnow_iso(),
+                    utcnow_iso(),
+                    tid,
+                    identity.user_id,
+                ),
+            )
+            updated = self._tasks.get(conn, identity.user_id, tid)
+        if updated is None:
+            raise RuntimeError("task disappeared while completing")
         return updated
 
     def begin_execution(

@@ -81,8 +81,13 @@ from atlas.tools.schema import SchemaField, ToolSchema, validate_input, validate
 
 PASSWORD = "correct-horse-battery-staple"
 
+#: The approved tool set, spelled out rather than derived from
+#: ``build_definitions()``. Deriving it would make these tests pass whatever the
+#: registry happens to contain, which is exactly the drift they exist to catch:
+#: adding a tool is a capability change and should have to edit this list.
 BUILTIN_TOOL_IDS = (
     "artifact_metadata",
+    "csv_statistics",
     "json_shape_inspect",
     "numeric_summary",
     "task_graph_summary",
@@ -339,7 +344,7 @@ def test_definition_describes_itself_without_exposing_the_implementation() -> No
 # ------------------------------------------------------------ the registry
 
 
-def test_default_registry_is_frozen_and_holds_the_five_built_ins() -> None:
+def test_default_registry_is_frozen_and_holds_every_built_in() -> None:
     registry = default_registry()
     assert registry.frozen
     assert registry.capabilities() == BUILTIN_TOOL_IDS

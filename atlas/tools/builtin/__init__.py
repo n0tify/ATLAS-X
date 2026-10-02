@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from atlas.tools.builtin import (
     artifact_metadata,
+    csv_statistics,
     json_shape_inspect,
     numeric_summary,
     task_graph_summary,
@@ -24,6 +25,7 @@ from atlas.tools.definition import ToolDefinition
 _MODULES = (
     text_statistics,
     numeric_summary,
+    csv_statistics,
     json_shape_inspect,
     artifact_metadata,
     task_graph_summary,

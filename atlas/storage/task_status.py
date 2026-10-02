@@ -24,9 +24,9 @@ Task lifecycle
 
 ::
 
-    pending ──▶ planned ──▶ executing ──▶ executed ──▶ verified ──▶ succeeded
-                   │            │            │
-                   └────────────┴────────────┴──▶ failed
+    pending ──▶ planned ──▶ executing ──▶ executed ──▶ verifying ──▶ verified ──▶ succeeded
+                   │            │            │            │            │
+                   └────────────┴────────────┴──▶ failed   └────────────┴──▶ failed
 
 Reading it step by step, and who owns each edge:
 
@@ -42,10 +42,30 @@ Reading it step by step, and who owns each edge:
 * ``executing → failed`` and ``executed → failed``
     Phase 12 writes the first; Phase 13 writes the second when verification
     returns something other than PASS. Either way the task stops.
-* ``executed → verified`` and ``verified → succeeded``
-    Phase 13 only, and only on a verification PASS. ``succeeded`` is unreachable
-    without passing through ``verified``, which is what makes "verified" mean
-    something other than "the run finished".
+* ``executed → verifying``
+    Phase 13, before the first verdict is computed. ``executed`` means "the run
+    finished", and finishing a run is not the same fact as having checked it;
+    ``verifying`` is where the check is actually under way.
+* ``verifying → verified`` / ``verifying → failed``
+    Phase 13. A PASS that survived every per-execution verdict moves the task to
+    ``verified``; anything else moves it to ``failed`` and publishes no result.
+    A verification that is interrupted -- a crash, a refused precondition, a
+    row nobody can read -- leaves the task at ``verifying``, which reads as
+    "interrupted, and a human or Phase 16 has to decide" rather than as
+    ``executed``, which would read as "ready to check again" and invite a
+    second opinion about bytes that already have one.
+* ``verified → succeeded``
+    Phase 13, written in the same transaction as the task result and only after
+    :meth:`~atlas.security.service.AuthorizationService.finish_verified_task` has
+    confirmed that every execution of the task carries a recorded PASS.
+
+    There is deliberately **no** ``executed → verified`` edge. Phase 12 drew one,
+    as a placeholder for a phase that did not exist yet, and Phase 13 removes it:
+    with the edge present any caller holding ``TASK.UPDATE`` could move an
+    unverified task straight to ``verified`` and publish a result for it, which is
+    the exact bypass the ``verifying`` state exists to prevent. ``verified`` is
+    now reachable only from ``verifying``, and the verifier is the only component
+    that writes it.
 * ``failed``
     Terminal in this build. Phase 16 recovery re-runs a *step* through the same
     authorization boundary; it does not resurrect a task, so it does not need a
@@ -84,6 +104,7 @@ class TaskStatus(StrEnum):
     PLANNED = "planned"
     EXECUTING = "executing"
     EXECUTED = "executed"
+    VERIFYING = "verifying"
     VERIFIED = "verified"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -144,6 +165,9 @@ TASK_TRANSITIONS: Mapping[str, frozenset[str]] = MappingProxyType(
             {TaskStatus.EXECUTED.value, TaskStatus.FAILED.value}
         ),
         TaskStatus.EXECUTED.value: frozenset(
+            {TaskStatus.VERIFYING.value, TaskStatus.FAILED.value}
+        ),
+        TaskStatus.VERIFYING.value: frozenset(
             {TaskStatus.VERIFIED.value, TaskStatus.FAILED.value}
         ),
         TaskStatus.VERIFIED.value: frozenset({TaskStatus.SUCCEEDED.value}),

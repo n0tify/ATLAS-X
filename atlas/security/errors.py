@@ -54,3 +54,23 @@ class PermissionDenied(AuthorizationError):
         self, reason: DenyReason = DenyReason.RESOURCE_NOT_OWNED
     ) -> None:
         super().__init__(reason)
+
+
+class ResultUnpublishable(AuthorizationError):
+    """A successful task result was asked for without the proof that entitles it.
+
+    Separate from :class:`PermissionDenied` because the actor is not the problem:
+    the caller owns the task and holds ``TASK.UPDATE``. What is missing is a
+    recorded PASS verdict for every execution of the task, which
+    :meth:`~atlas.security.service.AuthorizationService.finish_verified_task`
+    checks before it writes anything.
+
+    It exists as its own type so that "the result was withheld for want of
+    evidence" cannot be confused with "you may not", which would otherwise push a
+    caller towards reporting a verification gap as an access-control problem.
+    """
+
+    def __init__(
+        self, reason: DenyReason = DenyReason.OPERATION_NOT_PERMITTED
+    ) -> None:
+        super().__init__(reason)

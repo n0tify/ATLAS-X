@@ -89,10 +89,14 @@ class DenyReason(str, Enum):
 #:   ``EXECUTION.UPDATE`` for closing a dispatch row the executor already opened.
 #:   ``EXECUTION.APPEND`` and ``PLAN_STEP.UPDATE`` were already permitted, but
 #:   nothing wrote them before; the enforcement points now exist.
+#: * Phase 13 added ``VERIFICATION.CREATE`` for the evidence the verifier writes.
+#:   It is create-only on purpose: a verdict that could be edited or deleted would
+#:   not be evidence of anything, so ``UPDATE`` and ``DELETE`` stay absent for
+#:   this resource permanently, not just for this phase.
 #:
-#: ``UPDATE`` remains absent for every resource Phase 12 does not own. A caller
-#: still cannot edit a plan, an artifact, a verification, or a failure, and
-#: ``create_plan`` is the only path that writes a plan row.
+#: ``UPDATE`` remains absent for every resource Phase 13 does not own. A caller
+#: still cannot edit a plan, an artifact, or a failure, and ``create_plan`` is the
+#: only path that writes a plan row.
 PERMITTED_OPERATIONS: MappingProxyType[Resource, frozenset[Operation]] = MappingProxyType(
     {
         Resource.TASK: frozenset(
@@ -110,7 +114,7 @@ PERMITTED_OPERATIONS: MappingProxyType[Resource, frozenset[Operation]] = Mapping
             {Operation.READ, Operation.APPEND, Operation.UPDATE}
         ),
         Resource.ARTIFACT: frozenset({Operation.READ}),
-        Resource.VERIFICATION: frozenset({Operation.READ}),
+        Resource.VERIFICATION: frozenset({Operation.READ, Operation.CREATE}),
         Resource.FAILURE: frozenset({Operation.READ}),
         Resource.RECOVERY_ATTEMPT: frozenset({Operation.READ}),
         Resource.PROVENANCE_EVENT: frozenset({Operation.READ}),

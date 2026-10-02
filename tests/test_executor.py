@@ -227,11 +227,23 @@ class TestTaskStatusLifecycle:
             "pending": frozenset({"planned"}),
             "planned": frozenset({"executing"}),
             "executing": frozenset({"executed", "failed"}),
-            "executed": frozenset({"verified", "failed"}),
+            # Phase 13 removed `executed -> verified`: `verified` is reachable only
+            # from `verifying`, so no caller holding TASK.UPDATE can walk an
+            # unverified task to `verified` and publish a result for it.
+            "executed": frozenset({"verifying", "failed"}),
+            "verifying": frozenset({"verified", "failed"}),
             "verified": frozenset({"succeeded"}),
             "succeeded": frozenset(),
             "failed": frozenset(),
         }
+
+    def test_verified_is_not_reachable_without_verifying(self) -> None:
+        # The single most important edge in the table. Phase 12 drew
+        # `executed -> verified` as a placeholder; while it exists, the verifier's
+        # only real guarantee evaporates, because `verified -> succeeded` would
+        # then be reachable from `executed` by anyone with TASK.UPDATE.
+        assert "verified" not in TASK_TRANSITIONS["executed"]
+        assert "succeeded" not in TASK_TRANSITIONS["executed"]
 
     @pytest.mark.parametrize(
         ("current", "requested"),
@@ -240,7 +252,10 @@ class TestTaskStatusLifecycle:
             ("planned", "executing"),
             ("executing", "executed"),
             ("executing", "failed"),
-            ("executed", "verified"),
+            ("executed", "verifying"),
+            ("executed", "failed"),
+            ("verifying", "verified"),
+            ("verifying", "failed"),
             ("verified", "succeeded"),
         ],
     )
@@ -256,6 +271,10 @@ class TestTaskStatusLifecycle:
             ("executed", "executed"),
             ("executing", "verified"),
             ("planned", "executed"),
+            # Phase 13 removed this edge. Leaving it listed is how a reader learns
+            # it must not be re-added.
+            ("executed", "verified"),
+            ("verifying", "executed"),
             # Terminal means terminal.
             ("succeeded", "failed"),
             ("failed", "planned"),
