@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+*.env.local
+.env.*.local
+
+# Virtual environments
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Runtime data (SQLite + artifacts) — generated, not source
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local experiment outputs
+experiments/output/
+reports/generated/

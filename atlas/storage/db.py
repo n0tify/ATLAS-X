@@ -1,0 +1,74 @@
+"""SQLite connection management and transactional access.
+
+Every call to :meth:`Database.transaction` produces a fresh connection with a
+strict set of pragmas (foreign keys ON, WAL, busy timeout, normal sync), gives
+the caller a commit-on-success / rollback-on-exception scope, then closes it.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from atlas.storage.migrations import init_db, upgrade_to_v3
+
+
+class Database:
+    def __init__(self, path: str | Path, timeout_seconds: float = 5.0) -> None:
+        self._path = Path(path)
+        self._timeout = timeout_seconds
+        if str(self._path) != ":memory:":
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _configure(conn: sqlite3.Connection) -> None:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+
+    def connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._path), timeout=self._timeout)
+        self._configure(conn)
+        return conn
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        conn = self.connect()
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def initialize(self) -> None:
+        """Bring the database to this build's schema version, idempotently.
+
+        The version upgrade runs first and on its own connection because the one
+        statement in it that is not additive -- the ``plans`` rebuild -- has to
+        run with foreign keys off and outside a transaction. See
+        :mod:`atlas.storage.migrations` for why both conditions are required.
+        """
+
+        conn = self.connect()
+        try:
+            conn.isolation_level = None
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("BEGIN")
+            try:
+                upgrade_to_v3(conn)
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
+
+        with self.transaction() as conn:
+            init_db(conn)
