@@ -1,0 +1,19 @@
+# Normalize line endings in the repository so a checkout on Windows and a
+# checkout on the Linux guest produce identical bytes. Without this, every file
+# warns "LF will be replaced by CRLF" and diffs between the two machines
+# become noise.
+
+* text=auto eol=lf
+
+# Windows-native scripts keep Windows endings so they stay double-clickable.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary, never diffed or line-ending converted.
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.pdf binary
