@@ -8,6 +8,7 @@ from the evidence.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from atlas.failure import FailureRecord, FailureRepo
@@ -152,6 +153,17 @@ class FailureService:
                 operation=Operation.READ,
             )
             return self._failure_to_dict(failure)
+
+    def get(
+        self, conn: sqlite3.Connection, failure_id: int
+    ) -> "FailureRecord" | None:
+        """Read a failure by id from a connection, without ownership checks.
+
+        This is for internal use by the recovery service, which already
+        performs its own ownership checks.
+        """
+
+        return self._failures.get(conn, failure_id)
 
     def failures_for_task(
         self, session_token: object, task_id: int

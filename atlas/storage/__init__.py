@@ -1,6 +1,7 @@
 """Persistence: SQLite connection handling, deterministic migrations, and repositories."""
 
 from atlas.failure.repo import FailureRecord, FailureRepo
+from atlas.recovery.repo import RecoveryAttempt, RecoveryRepo, RecoveryWriteInvalid
 from atlas.storage.db import Database
 from atlas.storage.owned_resources import (
     OwnedResourceRepo,
@@ -36,6 +37,9 @@ __all__ = [
     "ProvenanceVerificationError",
     "FailureRepo",
     "FailureRecord",
+    "RecoveryAttempt",
+    "RecoveryRepo",
+    "RecoveryWriteInvalid",
     "OwnedResourceRepo",
     "OwnedTable",
     "UnsupportedOwnedResource",
