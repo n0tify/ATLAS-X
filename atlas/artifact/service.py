@@ -18,9 +18,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from atlas.artifact.repo import ArtifactRepo
+from atlas.security.policy import Operation, Resource
 
 if TYPE_CHECKING:
-    from atlas.security.policy import DenyReason, Operation, Resource
+    from atlas.security.policy import DenyReason
     from atlas.security.service import AuthorizationService
 
 logger = logging.getLogger(__name__)
