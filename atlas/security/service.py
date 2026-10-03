@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from typing import Any, Mapping, NoReturn, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, NoReturn, Sequence
 
 from atlas.auth.service import AuthService
 from atlas.security.errors import (
@@ -67,6 +67,9 @@ from atlas.storage.task_status import (
 )
 from atlas.storage.verification_repo import VerificationRepo, VerificationWriteInvalid
 from atlas.util import utcnow_iso
+
+if TYPE_CHECKING:
+    from atlas.failure.service import FailureService
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +119,7 @@ class AuthorizationService:
         executions: ExecutionRepo | None = None,
         verifications: VerificationRepo | None = None,
         provenance: ProvenanceRepo | None = None,
+        failures: "FailureService" | None = None,
         owned: OwnedResourceRepo | None = None,
         tool_grants: ToolGrantSource | None = None,
     ) -> None:
@@ -127,6 +131,8 @@ class AuthorizationService:
         self._executions = executions or ExecutionRepo()
         self._verifications = verifications or VerificationRepo()
         self._provenance = provenance or ProvenanceRepo()
+        from atlas.failure.service import FailureService
+        self._failures = failures or FailureService(self)
         self._owned = owned or OwnedResourceRepo()
         self._tool_grants = tool_grants
 
@@ -481,6 +487,77 @@ class AuthorizationService:
         if updated is None:
             raise RuntimeError("task disappeared while completing")
         return updated
+
+    # -- failures ----------------------------------------------------------
+
+    def record_failure(
+        self,
+        session_token: object,
+        *,
+        execution_id: object,
+        exc: BaseException,
+        plan_step_id: int | None = None,
+        invocation_id: str | None = None,
+        error_code: str | None = None,
+    ) -> int:
+        """Record a classified failure for an execution.
+
+        Classification is deterministic and happens in the same transaction as
+        the provenance event, so the failure graph is never disconnected from
+        the evidence.
+        """
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.FAILURE, Operation.CREATE)
+        return self._failures.record_failure(
+            session_token,
+            execution_id=eid,
+            exc=exc,
+            plan_step_id=plan_step_id,
+            invocation_id=invocation_id,
+            error_code=error_code,
+        )
+
+    def get_failure(
+        self, session_token: object, failure_id: object
+    ) -> dict[str, Any] | None:
+        """Read a failure by id, enforcing ownership."""
+
+        identity = self.authenticate(session_token)
+        fid = self._as_id(failure_id, Resource.FAILURE)
+        self._permit(identity, Resource.FAILURE, Operation.READ)
+        return self._failures.get_failure(session_token, fid)
+
+    def failures_for_task(
+        self, session_token: object, task_id: object
+    ) -> list[dict[str, Any]]:
+        """All failures for a task the caller owns."""
+
+        identity = self.authenticate(session_token)
+        tid = self._as_id(task_id, Resource.TASK)
+        self._permit(identity, Resource.FAILURE, Operation.READ)
+        return self._failures.failures_for_task(session_token, tid)
+
+    def failures_for_execution(
+        self, session_token: object, execution_id: object
+    ) -> list[dict[str, Any]]:
+        """All failures for an execution the caller owns."""
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.FAILURE, Operation.READ)
+        return self._failures.failures_for_execution(session_token, eid)
+
+    def latest_failure_for_execution(
+        self, session_token: object, execution_id: object
+    ) -> dict[str, Any] | None:
+        """The most recent failure for an execution, if any."""
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.FAILURE, Operation.READ)
+        return self._failures.latest_failure_for_execution(session_token, eid)
 
     def begin_execution(
         self,
