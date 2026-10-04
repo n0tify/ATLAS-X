@@ -18,7 +18,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from atlas.artifact.repo import ArtifactRepo
-from atlas.security.policy import Operation, Resource
+from atlas.security.policy import DenyReason, Operation, Resource
 
 if TYPE_CHECKING:
     from atlas.security.policy import DenyReason
