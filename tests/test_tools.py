@@ -665,9 +665,9 @@ def test_grant_is_persisted_and_readable_for_its_owner(
     db: Database, auth: AuthService, grants: ToolGrantRepo
 ) -> None:
     auth.register("alice", PASSWORD)
-    auth.register("bob", PASSWORD)
+    auth.register("bobby", PASSWORD)
     alice = _user_id(db, "alice")
-    bob = _user_id(db, "bob")
+    bob = _user_id(db, "bobby")
 
     grants.grant(user_id=alice, tool_name="text_statistics", granted_by="operator")
 
@@ -709,7 +709,7 @@ def test_revoke_removes_the_capability_immediately(
 
 def test_revoke_cannot_reach_another_users_grant(db: Database, grants: ToolGrantRepo) -> None:
     alice = _register_id(db, "alice")
-    bob = _register_id(db, "bob")
+    bob = _register_id(db, "bobby")
     grant_id = grants.grant(user_id=alice, tool_name="text_statistics", granted_by="operator")
     assert grants.revoke(user_id=bob, grant_id=grant_id) is False
     assert grants.grants_for(alice)
@@ -759,9 +759,9 @@ def test_a_task_scoped_grant_does_not_leak_into_another_user(
     authz_with_grants: tuple[AuthorizationService, ToolGrantRepo],
 ) -> None:
     authz, grants = authz_with_grants
-    auth.register("bob", PASSWORD)
+    auth.register("bobby", PASSWORD)
     alice = _user_id(db, "alice")
-    bob = _user_id(db, "bob")
+    bob = _user_id(db, "bobby")
     alice_task = _new_task(db, alice)
     bob_task = _new_task(db, bob)
     grants.grant(
@@ -772,7 +772,7 @@ def test_a_task_scoped_grant_does_not_leak_into_another_user(
     )
     with pytest.raises(PermissionDenied):
         authz.require_tool_invocation(
-            _token(auth, "bob"),
+            _token(auth, "bobby"),
             tool_name="text_statistics",
             resource=Resource.TASK,
             resource_id=bob_task,
@@ -1003,8 +1003,8 @@ def test_a_known_tool_cannot_be_dispatched_on_another_users_task(
     granted: tuple[AuthorizationService, ToolDispatcher], db: Database, auth: AuthService
 ) -> None:
     authz, dispatcher = granted
-    auth.register("bob", PASSWORD)
-    bob = _user_id(db, "bob")
+    auth.register("bobby", PASSWORD)
+    bob = _user_id(db, "bobby")
     bob_task = _new_task(db, bob)
 
     with pytest.raises(AuthorizationError):
@@ -1697,8 +1697,8 @@ def test_artifact_metadata_cannot_reach_another_users_execution(
     granted: tuple[AuthorizationService, ToolDispatcher], db: Database, auth: AuthService
 ) -> None:
     _, dispatcher = granted
-    auth.register("bob", PASSWORD)
-    bob = _user_id(db, "bob")
+    auth.register("bobby", PASSWORD)
+    bob = _user_id(db, "bobby")
     bob_task = _seed_execution(db, bob, [("bob.txt", "file", 1)])
     alice = _user_id(db, "alice")
     alice_task = _new_task(db, alice)
@@ -1724,8 +1724,8 @@ def test_task_graph_summary_counts_only_the_callers_rows(
     granted: tuple[AuthorizationService, ToolDispatcher], db: Database, auth: AuthService
 ) -> None:
     _, dispatcher = granted
-    auth.register("bob", PASSWORD)
-    bob = _user_id(db, "bob")
+    auth.register("bobby", PASSWORD)
+    bob = _user_id(db, "bobby")
     alice = _user_id(db, "alice")
     # bob holds the same capability; the difference under test is task scoping,
     # not grant presence.
@@ -1748,7 +1748,7 @@ def test_task_graph_summary_counts_only_the_callers_rows(
     # The same tool on bob's task reports only bob's rows, so the counts are a
     # property of the task rather than of the tool.
     bob_result = dispatcher.dispatch(
-        _token(auth, "bob"),
+        _token(auth, "bobby"),
         tool_id="task_graph_summary",
         task_id=bob_task,
         arguments={},
@@ -1812,7 +1812,7 @@ def test_the_view_has_no_write_method(db: Database) -> None:
 def test_the_view_applies_the_owner_predicate(db: Database) -> None:
     view = OwnedTaskView(db)
     alice = _register_id(db, "alice")
-    bob = _register_id(db, "bob")
+    bob = _register_id(db, "bobby")
     alice_task = _seed_execution(db, alice, [("a.txt", "file", 1)])
     bob_task = _seed_execution(db, bob, [("b.txt", "file", 1)])
 
@@ -1826,7 +1826,7 @@ def test_the_view_applies_the_owner_predicate(db: Database) -> None:
 def test_the_view_returns_none_for_a_row_the_caller_does_not_own(db: Database) -> None:
     view = OwnedTaskView(db)
     alice = _register_id(db, "alice")
-    bob = _register_id(db, "bob")
+    bob = _register_id(db, "bobby")
     alice_task = _seed_execution(db, alice, [("a.txt", "file", 1)])
     with db.transaction() as conn:
         execution_id = int(
@@ -1867,7 +1867,7 @@ def test_the_view_refuses_a_resource_it_does_not_own_safely(db: Database) -> Non
 def test_counting_does_not_require_reading_every_row(db: Database) -> None:
     view = OwnedTaskView(db)
     alice = _register_id(db, "alice")
-    bob = _register_id(db, "bob")
+    bob = _register_id(db, "bobby")
     alice_task = _seed_execution(db, alice, [("a.txt", "file", 1), ("b.txt", "file", 1)])
     bob_task = _seed_execution(db, bob, [("bob.txt", "file", 1)])
     assert view.count_rows(resource="artifact", user_id=alice, task_id=alice_task) == 2

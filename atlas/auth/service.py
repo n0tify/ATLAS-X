@@ -6,12 +6,45 @@ import sqlite3
 import time
 from typing import Any
 
-from atlas.auth.password import hash_password, validate_username, verify_password
+from atlas.auth.password import (
+    MIN_PASSWORD_LENGTH,
+    USERNAME_MAX_LENGTH,
+    USERNAME_MIN_LENGTH,
+    PasswordProblem,
+    UsernameProblem,
+    hash_password,
+    password_problem,
+    username_problem,
+    verify_password,
+)
 from atlas.auth.sessions import generate_session_token, hash_token
 from atlas.config.settings import Settings
 from atlas.storage.db import Database
 from atlas.storage.repositories import SessionRepo, UserRepo
 from atlas.util import add_minutes_iso, is_later_than, utcnow_iso
+
+# Policy failures carry their own wording so the caller can show the exact
+# reason. Every string below is safe to put in front of a person: none of them
+# quotes the rejected value back, names the rule that caught it, or states a
+# constraint the schema does not actually enforce.
+_USERNAME_MESSAGES: dict[UsernameProblem, str] = {
+    UsernameProblem.NOT_TEXT: "Username must be text.",
+    UsernameProblem.EMPTY: "Enter a username.",
+    UsernameProblem.NOT_PRINTABLE: "Username may only contain printable characters.",
+    UsernameProblem.SURROUNDING_WHITESPACE: "Username must not start or end with whitespace.",
+    UsernameProblem.TOO_SHORT: f"Username must be at least {USERNAME_MIN_LENGTH} characters.",
+    UsernameProblem.TOO_LONG: f"Username must be at most {USERNAME_MAX_LENGTH} characters.",
+}
+
+_PASSWORD_MESSAGES: dict[PasswordProblem, str] = {
+    PasswordProblem.NOT_TEXT: "Password must be text.",
+    PasswordProblem.EMPTY: "Enter a password.",
+    PasswordProblem.NOT_PRINTABLE: "Password may only contain printable characters.",
+    PasswordProblem.TOO_SHORT: f"Password must be at least {MIN_PASSWORD_LENGTH} characters.",
+    PasswordProblem.TOO_LONG: "Password is too long.",
+}
+
+DUPLICATE_USERNAME_MESSAGE = "That username is already in use."
 
 
 class AuthError(Exception):
@@ -23,6 +56,17 @@ class AuthenticationFailed(AuthError):
 
 
 class LoginLockedError(AuthError):
+    pass
+
+
+class UsernameRejected(AuthError):
+    # Username breaks the registration identifier policy. The message is the
+    # safe external reason; the underlying UsernameProblem stays internal.
+    pass
+
+
+class PasswordRejected(AuthError):
+    # Password breaks the registration credential policy. Same contract.
     pass
 
 
@@ -47,15 +91,26 @@ class AuthService:
         self._db.initialize()
 
     def register(self, username: str, password: str) -> dict[str, Any]:
-        if not validate_username(username):
-            raise ValueError("username must be 3-32 characters of letters, digits, '_' or '-'")
-        if len(password) < 8:
-            raise ValueError("password must be at least 8 characters")
+        username_fault = username_problem(username)
+        if username_fault is not None:
+            raise UsernameRejected(_USERNAME_MESSAGES[username_fault])
+        password_fault = password_problem(password)
+        if password_fault is not None:
+            raise PasswordRejected(_PASSWORD_MESSAGES[password_fault])
         password_hash = hash_password(password)
         with self._db.transaction() as conn:
             if self._users.exists(conn, username):
-                raise UsernameAlreadyExists(f"username '{username}' is already registered")
-            user_id = self._users.create(conn, username=username, password_hash=password_hash)
+                raise UsernameAlreadyExists(DUPLICATE_USERNAME_MESSAGE)
+            try:
+                user_id = self._users.create(
+                    conn, username=username, password_hash=password_hash
+                )
+            except sqlite3.IntegrityError as exc:
+                # Two registrations can pass the exists() check before either
+                # inserts. The unique index is the real guarantee, so its
+                # rejection is reported the same way instead of surfacing as an
+                # opaque SQL error.
+                raise UsernameAlreadyExists(DUPLICATE_USERNAME_MESSAGE) from exc
             self._record_registration(conn, user_id)
             return self._public_user(conn, user_id)
 
@@ -112,8 +167,9 @@ class AuthService:
     def change_password(
         self, user_id: int, current_password: str, new_password: str
     ) -> None:
-        if len(new_password) < 8:
-            raise ValueError("new password must be at least 8 characters")
+        password_fault = password_problem(new_password)
+        if password_fault is not None:
+            raise PasswordRejected(_PASSWORD_MESSAGES[password_fault])
         with self._db.transaction() as conn:
             user = self._users.get_by_id(conn, user_id)
             if user is None:

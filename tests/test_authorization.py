@@ -74,7 +74,7 @@ def authz(db: Database, auth: AuthService) -> AuthorizationService:
 @pytest.fixture
 def two_users(auth: AuthService) -> tuple[int, int]:
     alice = int(_register(auth, "alice")["id"])
-    bob = int(_register(auth, "bob")["id"])
+    bob = int(_register(auth, "bobby")["id"])
     return alice, bob
 
 
@@ -266,31 +266,31 @@ def test_non_owner_cannot_read_a_task_by_id(
     authz: AuthorizationService, auth: AuthService
 ) -> None:
     _register(auth, "alice")
-    _register(auth, "bob")
+    _register(auth, "bobby")
     task_id = authz.create_task(_token(auth, "alice"), title="a", goal="g")["id"]
     with pytest.raises(PermissionDenied):
-        authz.get_task(_token(auth, "bob"), task_id)
+        authz.get_task(_token(auth, "bobby"), task_id)
 
 
 def test_task_listing_never_leaks_another_users_tasks(
     authz: AuthorizationService, auth: AuthService
 ) -> None:
     _register(auth, "alice")
-    _register(auth, "bob")
+    _register(auth, "bobby")
     authz.create_task(_token(auth, "alice"), title="a", goal="g")
-    authz.create_task(_token(auth, "bob"), title="b", goal="g")
+    authz.create_task(_token(auth, "bobby"), title="b", goal="g")
     assert [row["title"] for row in authz.list_tasks(_token(auth, "alice"))] == ["a"]
-    assert [row["title"] for row in authz.list_tasks(_token(auth, "bob"))] == ["b"]
+    assert [row["title"] for row in authz.list_tasks(_token(auth, "bobby"))] == ["b"]
 
 
 def test_non_owner_cannot_delete_a_task(
     authz: AuthorizationService, auth: AuthService, db: Database
 ) -> None:
     _register(auth, "alice")
-    _register(auth, "bob")
+    _register(auth, "bobby")
     task_id = authz.create_task(_token(auth, "alice"), title="a", goal="g")["id"]
     with pytest.raises(PermissionDenied):
-        authz.delete_task(_token(auth, "bob"), task_id)
+        authz.delete_task(_token(auth, "bobby"), task_id)
     assert _count(db, "tasks") == 1
     authz.delete_task(_token(auth, "alice"), task_id)
     assert _count(db, "tasks") == 0
@@ -302,9 +302,9 @@ def test_denied_lookup_is_indistinguishable_from_a_missing_one(
     """No resource-existence oracle: same type, same message."""
 
     _register(auth, "alice")
-    _register(auth, "bob")
+    _register(auth, "bobby")
     task_id = authz.create_task(_token(auth, "alice"), title="a", goal="g")["id"]
-    bob = _token(auth, "bob")
+    bob = _token(auth, "bobby")
 
     with pytest.raises(AuthorizationError) as not_owned:
         authz.get_task(bob, task_id)
@@ -327,7 +327,7 @@ def test_non_owner_cannot_read_any_descendant_by_id(
     ids = _seed_chain(db, two_users[0])
     with pytest.raises(PermissionDenied):
         authz.get_owned_resource(
-            _token(auth, "bob"), resource=kind, resource_id=ids[kind.value]
+            _token(auth, "bobby"), resource=kind, resource_id=ids[kind.value]
         )
     assert authz.get_owned_resource(
         _token(auth, "alice"), resource=kind, resource_id=ids[kind.value]
@@ -351,7 +351,7 @@ def test_non_owner_cannot_list_another_users_descendants(
     )
     with pytest.raises(PermissionDenied):
         authz.list_owned_resources(
-            _token(auth, "bob"), resource=kind, task_id=ids["task"]
+            _token(auth, "bobby"), resource=kind, task_id=ids["task"]
         )
     assert isinstance(
         authz.list_owned_resources(
@@ -395,7 +395,7 @@ def test_provenance_without_a_resolvable_owner_is_invisible_to_everyone(
     orphan = _event_id(db, "user.registered")
 
     # Unreadable by id, for either user.
-    for who in ("alice", "bob"):
+    for who in ("alice", "bobby"):
         with pytest.raises(PermissionDenied):
             authz.get_owned_resource(
                 _token(auth, who), resource=Resource.PROVENANCE_EVENT, resource_id=orphan
@@ -410,7 +410,7 @@ def test_provenance_without_a_resolvable_owner_is_invisible_to_everyone(
     # And the non-owner cannot list the task at all.
     with pytest.raises(PermissionDenied):
         authz.list_owned_resources(
-            _token(auth, "bob"), resource=Resource.PROVENANCE_EVENT, task_id=ids["task"]
+            _token(auth, "bobby"), resource=Resource.PROVENANCE_EVENT, task_id=ids["task"]
         )
 
 
@@ -439,7 +439,7 @@ def test_provenance_append_onto_another_users_execution_is_denied(
     before = _count(db, "provenance_events")
     with pytest.raises(PermissionDenied):
         authz.append_provenance_event(
-            _token(auth, "bob"),
+            _token(auth, "bobby"),
             resource=Resource.EXECUTION,
             resource_id=ids["execution"],
             event_type="execution.finished",
@@ -828,7 +828,7 @@ def test_tool_invocation_on_another_users_resource_is_denied(
     )
     with pytest.raises(PermissionDenied):
         service.authorize_tool_invocation(
-            _token(auth, "bob"),
+            _token(auth, "bobby"),
             tool_name="summarize",
             resource=Resource.EXECUTION,
             resource_id=ids["execution"],
@@ -936,7 +936,7 @@ def test_repeated_denials_never_escalate(
     authz: AuthorizationService, auth: AuthService, db: Database, two_users: tuple[int, int]
 ) -> None:
     ids = _seed_chain(db, two_users[0])
-    bob = _token(auth, "bob")
+    bob = _token(auth, "bobby")
     for _ in range(10):
         with pytest.raises(PermissionDenied):
             authz.get_owned_resource(
@@ -1068,7 +1068,7 @@ def test_authorization_writes_no_provenance_for_its_own_decisions(
     before = _count(db, "provenance_events")
     with pytest.raises(PermissionDenied):
         authz.get_owned_resource(
-            _token(auth, "bob"), resource=Resource.ARTIFACT, resource_id=ids["artifact"]
+            _token(auth, "bobby"), resource=Resource.ARTIFACT, resource_id=ids["artifact"]
         )
     assert _count(db, "provenance_events") == before
 
@@ -1081,7 +1081,7 @@ def test_denial_log_carries_a_reason_and_no_secret_material(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     ids = _seed_chain(db, two_users[0])
-    token = _token(auth, "bob")
+    token = _token(auth, "bobby")
     with caplog.at_level("WARNING", logger="atlas.security.service"):
         with pytest.raises(PermissionDenied):
             authz.get_task(token, ids["task"])

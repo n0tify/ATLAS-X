@@ -92,8 +92,8 @@ def alice(auth: AuthService) -> str:
 
 @pytest.fixture
 def bob(auth: AuthService) -> str:
-    auth.register("bob", PASSWORD)
-    return str(auth.login("bob", PASSWORD)["token"])
+    auth.register("bobby", PASSWORD)
+    return str(auth.login("bobby", PASSWORD)["token"])
 
 
 @pytest.fixture
