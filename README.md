@@ -1,317 +1,426 @@
 # ATLAS-X
+### A Local-First Research Platform for Reliable AI Agents
 
-A local-first research platform for studying **reliable, verifiable, secure multi-step AI agents**.
+<p align="center">
+  <strong>Investigating reliability, authorization, sandboxing, independent verification, and provenance in multi-step AI agent systems.</strong>
+</p>
 
-> Research question: *How do explicit planning, deterministic verification, provenance tracking, controlled tool execution, and bounded recovery affect the reliability and auditability of local multi-step AI agents?*
+<p align="center">
+  <a href="https://github.com/n0tify/ATLAS-X">Repository</a> ·
+  <a href="https://github.com/n0tify/ATLAS-X/issues">Issues</a> ·
+  <a href="https://github.com/n0tify/ATLAS-X/security">Security</a>
+</p>
 
-## Status
+---
 
-ATLAS-X is an implemented research prototype (version 0.1.0), not a deployed product. Core backend, HTTP API, React frontend, planning, execution, verification, recovery, sandboxing, and provenance are implemented. Containerization, dependency-aware readiness, hosted model endpoints, and a full WCAG audit are not.
+## Overview
 
-No benchmark results are claimed. Any future metric must trace to a stored, reproducible run.
+AI agents can plan, select tools, execute actions, and produce artifacts. But a successful-looking output does not necessarily mean that an agent followed its permissions, executed safely, or produced results that can be independently verified.
 
-## What ATLAS-X does
+**ATLAS-X is a local-first research prototype for investigating these reliability and security properties.**
 
-ATLAS-X takes a user task, plans it with a local LLM, validates the plan deterministically, executes whitelisted tools inside a WSL2 sandbox, verifies results independently, records provenance, and supports bounded recovery. It is designed to measure how authorization, sandboxing, verification, provenance, and recovery affect agent reliability and security, with explicit ablation dimensions.
+It brings task orchestration, tool execution, verification, provenance tracking, security inspection, and controlled experiments into a single research workspace. The goal is to make agent behavior easier to inspect, evaluate, reproduce, and debug.
 
-## Key capabilities (implemented and verified)
+Rather than treating an agent's final response as the only measure of success, ATLAS-X provides infrastructure for examining the process that produced it.
 
-- Configuration with bounded, fail-closed settings (`atlas/config/settings.py`).
-- SQLite persistence with WAL, foreign keys, and versioned schema v4 (`atlas/storage/`).
-- Authentication with Argon2id passwords, opaque session tokens (SHA-256 stored), lockout, and generic errors (`atlas/auth/`).
-- Authorization with a deny-by-default `AuthorizationService` and ownership checks (`atlas/security/`).
-- Planner using Ollama-backed structured plan generation plus deterministic validation (`atlas/planner/`).
-- Executor with validated plan execution and budgets (`atlas/executor/`).
-- Tool registry and dispatcher with authorization and provenance (`atlas/tools/`).
-- WSL2 sandbox for tool execution, with no in-process fallback (`atlas/sandbox/`).
-- Independent verifier producing PASS/FAIL (`atlas/verifier/`).
-- Failure classification and bounded recovery (`atlas/failure/`, `atlas/recovery/`).
-- Artifact management with checksums (`atlas/artifact/`).
-- Provenance events with chain digests and a verification endpoint (`atlas/storage/repositories.py`).
-- FastAPI HTTP API with CORS, health, and readiness endpoints (`api/`).
-- React + TypeScript + Vite frontend with protected routes (`frontend/src/`).
+### Research questions
 
-Partial or experimental:
-- Benchmark and experiment scaffolding under `benchmarks/`, `experiments/`, and `datasets/`; no published results.
-- JSONL logging is not used; provenance is stored in SQLite.
+- How can tool permissions be enforced throughout a multi-step task?
+- How should tool execution be bounded and isolated?
+- Can independent verification detect failures that ordinary execution reports miss?
+- How can event histories and artifact digests support provenance inspection?
+- How do individual reliability and security controls affect experimental outcomes?
+- How can experiments remain reproducible without depending on paid APIs or remote inference services?
 
-Not supported:
-- Containerization or Docker runtime.
-- Hosted model endpoint (local Ollama only).
-- Multi-factor authentication or account recovery.
-- Full WCAG 2.2 AA audit.
-- License selected (MIT). Copyright holder name in `LICENSE` must be finalized before publication.
+> **Project status:** Research prototype. The interface and supporting research infrastructure are implemented, but not every security property is guaranteed, and the benchmark framework should not be interpreted as proof of production-grade reliability.
+
+## Key capabilities
+
+| Capability | Purpose |
+|---|---|
+| Task orchestration | Represent research goals as structured tasks and execution steps. |
+| Tool registry | Discover available tools and inspect their capabilities. |
+| Authorization | Apply permission checks to tool operations. |
+| Bounded execution | Constrain supported execution paths and investigate isolation boundaries. |
+| Independent verification | Check execution outcomes against verification rules. |
+| Provenance tracking | Record security-relevant events and inspect hash-linked histories. |
+| Artifact inspection | Examine artifact metadata, checksums, and related task information. |
+| Security workspace | Inspect task permissions, provenance, integrity, and events. |
+| Benchmark experiments | Run supported scenarios and compare configured experimental conditions. |
+| Local-first operation | Keep the research workflow centered on local infrastructure and data. |
+
+Actual guarantees depend on the execution path, configuration, and implementation. See [Security and limitations](#security-and-limitations).
+
+## Interface tour
+
+The screenshots below illustrate the research workspace. Add the corresponding image files under `docs/assets/` using the filenames shown here.
+
+### 1. Authentication
+
+A dedicated sign-in interface for accessing the research workspace.
+<img width="958" height="434" alt="image" src="https://github.com/user-attachments/assets/5afea478-c172-4613-9f1a-e2e6cb45225f" />
+
+![ATLAS-X authentication interface](docs/assets/login.png)
+
+### 2. Research dashboard
+
+The dashboard presents the research environment and a lifecycle visualization covering task creation, planning, authorization, tool execution, sandboxing, verification, artifacts, and provenance.
+<img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b8dc6137-f446-4c3c-88a1-8e1522f247cc" />
+
+![ATLAS-X research dashboard and lifecycle map](docs/assets/dashboard.png)
+
+### 3. Create a research task
+
+Define a task title and research goal, then inspect the tools available to the workspace.
+<img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/6765d142-8644-466a-af60-035544a01299" />
+
+![ATLAS-X task configuration interface](docs/assets/create-task.png)
+
+### 4. Research Playground
+
+Browse registered tools, inspect tool metadata and input parameters, and interact with supported analysis operations.
+<img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/843169b1-9769-48bb-817e-dda2a365d89e" />
+
+![ATLAS-X Research Playground tool catalogue](docs/assets/playground-tools.png)
+
+### 5. Research benchmarks
+
+Explore supported scenarios, select experimental configurations, and inspect recorded experiment history.
+<img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b0684cec-5e1e-4490-a329-2bb16fd9224b" />
+
+![ATLAS-X benchmark overview and experiment history](docs/assets/benchmarks.png)
+
+Benchmark availability and recorded experiment counts are not, by themselves, evidence of improved agent performance. Interpret results using the corresponding methodology and limitations.
+
+### 6. Security Center
+
+Inspect task-level information, permission views, provenance, integrity checks, and security-relevant events.
+<img width="959" height="431" alt="image" src="https://github.com/user-attachments/assets/352f5842-61d8-44cf-95de-066889cd8d95" />
+
+![ATLAS-X Security Center](docs/assets/security-center.png)
+
+### 7. Provenance Explorer
+
+Browse recorded task events and examine their associated chain digests.
+
+![ATLAS-X provenance chain explorer](docs/assets/provenance-chain.png)
+
+### 8. Integrity verification
+
+Inspect the reported outcome of a provenance-chain integrity check.
+<img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b9780bdd-2ee5-4ec4-a950-037cb5ccb9f5" />
+
+![ATLAS-X provenance integrity verification](docs/assets/provenance-verification.png)
+
+**Screenshot setup:** Save the nine supplied screenshots using the filenames above. Keep the images genuine and unaltered except for cropping or redacting sensitive information. In particular, remove email addresses, tokens, private task data, and other account information before publishing.
 
 ## Architecture
 
+ATLAS-X follows a local-first architecture built around explicit task state, controlled tool execution, persistence, verification, and provenance.
+
 ```mermaid
-flowchart LR
-  FE[React SPA] -->|REST /api| API[FastAPI]
-  API --> AUTH[Auth + Authorization]
-  API --> PLANNER[Planner -> Ollama loopback]
-  API --> EXEC[Executor -> ToolDispatcher]
-  EXEC --> SBX[WSL2 Sandbox]
-  API --> VER[Verifier]
-  API --> PROV[Provenance Repo]
-  AUTH --> DB[(SQLite v4)]
-  EXEC --> DB
-  VER --> DB
-  PROV --> DB
+flowchart TD
+    U[Researcher] --> UI[Research Workspace]
+    UI --> API[Application API]
+    API --> AUTH[Authentication and Authorization]
+    AUTH --> TASK[Task Orchestration]
+    TASK --> PLAN[Planning and Execution]
+    PLAN --> TOOLS[Registered Tools]
+    TOOLS --> SANDBOX[Bounded Execution Boundary]
+    SANDBOX --> VERIFY[Independent Verification]
+    VERIFY --> ART[Artifacts and Results]
+    TASK --> EVENTS[Security and Provenance Events]
+    ART --> EVENTS
+    EVENTS --> STORE[SQLite and Event Persistence]
+    STORE --> AUDIT[Integrity and Provenance Inspection]
+    VERIFY --> AUDIT
 ```
 
-See `docs/architecture/SYSTEM_WORKFLOWS.md` for end-to-end flows and `docs/architecture/ARCHITECTURE_AND_TRADEOFFS.md` for decisions and trade-offs.
+The diagram is a conceptual overview rather than a complete deployment or trust-boundary specification. Consult the architecture and threat-model documents for implementation details.
 
-## Technology stack
+### Technology stack
 
-| Technology | Role | Where used |
-|---|---|---|
-| Python 3.11 | Backend language | `atlas/`, `api/`, `tests/` |
-| FastAPI | HTTP API | `api/__init__.py`, routers |
-| Uvicorn | ASGI server | `api/server.py` |
-| Pydantic | Validation and settings | `atlas/config/settings.py`, routers |
-| Argon2 (argon2-cffi) | Password hashing | `atlas/auth/password.py` |
-| SQLite 3.38+ | Persistence | `atlas/storage/`, `data/` |
-| React 18 | Frontend UI | `frontend/src/` |
-| TypeScript 5.6 | Frontend typing | `frontend/src/`, `frontend/tsconfig*.json` |
-| Vite 5.4 | Frontend build/dev | `frontend/vite.config.ts` |
-| Ollama (local) | LLM planning | `atlas/planner/model.py` |
-| WSL2 (Windows) | Sandbox isolation | `atlas/sandbox/` |
-| pytest 8+ | Backend tests | `tests/` |
-| Ruff 0.4+ | Linting | `pyproject.toml` |
-| mypy 1.10+ | Type checking | `pyproject.toml` |
-| ESLint 9 | Frontend linting | `frontend/eslint.config.js` |
-| Playwright 1.64 | E2E tests | `frontend/playwright.config.ts`, `frontend/tests/` |
-## Execution lifecycle (example task)
+| Layer | Technologies |
+|---|---|
+| Backend | Python, FastAPI, Pydantic |
+| Persistence | SQLite and structured event records |
+| Authentication | Argon2-based password hashing and token-based authentication |
+| Frontend | React, TypeScript, Vite |
+| Local inference | Ollama, when configured |
+| Testing and quality | pytest, Ruff, mypy, ESLint, Playwright |
+| Execution environment | Windows development environment; WSL2 for supported isolated execution paths |
 
-1. User submits a task via the frontend (`frontend/src/pages/CreateTask.tsx`).
-2. Frontend calls `POST /api/tasks` (`api/routers/tasks.py`).
-3. Backend persists the task (`atlas/storage/repositories.py` `TaskRepo`).
-4. User triggers planning; backend calls the local Ollama model (`atlas/planner/service.py`, `atlas/planner/model.py`).
-5. Planner output is validated deterministically (`atlas/planner/validator.py`).
-6. Executor runs validated plan steps, invoking whitelisted tools through the dispatcher (`atlas/executor/service.py`, `atlas/tools/dispatch.py`).
-7. Each tool invocation is authorized (`atlas/security/service.py`) and executed in the WSL2 sandbox (`atlas/sandbox/supervisor.py`).
-8. Results and artifacts are persisted (`atlas/storage/execution_repo.py`, `atlas/artifact/`).
-9. Verifier independently checks results (`atlas/verifier/service.py`).
-10. Provenance events with chain digests are recorded (`atlas/storage/repositories.py` `ProvenanceRepo`).
-11. Frontend retrieves task detail, results, and provenance (`frontend/src/pages/TaskDetail.tsx`, `SecurityCenter.tsx`).
+Versions and configuration requirements should be taken from the repository's dependency and environment files.
 
-Model output is treated as untrusted input: plans are validated before execution, tool arguments are schema-validated, and results are independently verified.
+## Research methodology
 
-## Repository structure
+ATLAS-X is designed to support controlled investigations into agent reliability rather than to assume that an agent's own reports are sufficient evidence.
 
-```
-ATLAS-X/
-├── .github/workflows/ci.yml   # CI: ruff, mypy, pytest, eslint, build, playwright
-├── .env.example               # Safe environment template
-├── .gitattributes             # Line-ending normalization
-├── .gitignore                 # Excludes local/generated files
-├── api/                       # FastAPI application and routers
-│   ├── __init__.py            # App factory, CORS, security headers, startup
-│   ├── server.py              # Uvicorn entry point
-│   └── routers/               # auth, tasks, tools, system, benchmarks
-├── atlas/                     # Core Python implementation
-│   ├── artifact/              # Artifact management
-│   ├── auth/                  # Authentication (Argon2, sessions, lockout)
-│   ├── config/                # Bounded, fail-closed settings
-│   ├── executor/              # Plan execution
-│   ├── failure/               # Failure classification
-│   ├── planner/               # LLM planning + deterministic validation
-│   ├── provenance/            # Provenance helpers
-│   ├── recovery/              # Bounded recovery
-│   ├── sandbox/               # WSL2 sandbox (guest + supervisor)
-│   ├── security/              # Authorization, identity, policy, logging
-│   ├── storage/               # SQLite DB, migrations, repositories
-│   ├── tools/                 # Tool registry, dispatcher, 6 built-in tools
-│   ├── verifier/              # Independent verification
-│   ├── cli.py                 # CLI health/smoke check
-│   ├── logging_config.py      # Logging with secret redaction
-│   └── util.py
-├── benchmarks/                # Benchmark definitions (no published results)
-├── datasets/                  # Dataset definitions
-├── docker/                    # Docker documentation (no container build)
-├── docs/                      # Architecture, security, audits, development
-├── experiments/               # Experiment configurations
-├── frontend/                  # React + TypeScript + Vite application
-│   ├── src/                   # Application source
-│   ├── tests/                 # Playwright E2E tests
-│   ├── package.json           # Frontend dependencies and scripts
-│   └── playwright.config.ts   # Playwright configuration
-├── reports/                   # Intentional reports
-├── scripts/                   # Helper scripts
-├── tests/                     # Backend pytest suite
-├── CONTRIBUTING.md
-├── LICENSE                    # Placeholder (pending owner approval)
-├── README.md
-├── SECURITY.md
-├── pyproject.toml             # Python project and tool configuration
-├── run_backend.ps1
-├── start_atlas.bat / .ps1
-├── start_backend.bat
-└── test_backend.ps1
-```
+### Verification
 
-Generated/local-only directories (excluded by `.gitignore`): `.venv/`, `node_modules/`, `frontend/dist/`, `data/`, `*.db`, caches, logs, Playwright reports/results, `.trae/`.
+Verification checks execution outcomes using explicit rules. It is intended to provide a separate assessment of task results instead of relying solely on the agent's final response.
 
-## Prerequisites
+### Provenance and integrity
 
-- Python 3.11+
-- Node.js 20+
-- SQLite 3 (included with Python)
-- Optional: Ollama (for AI planning), WSL2 (for sandbox on Windows)
+The provenance workspace records events and exposes hash-linked event sequences for inspection. Integrity verification can detect certain inconsistencies in the recorded chain.
 
-## Installation
+**Important:** A valid hash chain does not establish that the original events were truthful, that the host was uncompromised, or that an attacker could not rewrite the entire history. Hash-linked provenance is not equivalent to a digitally signed, externally anchored audit log.
+
+### Experimental comparisons
+
+The benchmark workspace supports scenario selection, configuration selection, ablation modes, and experiment-history inspection.
+
+When interpreting results:
+
+- Distinguish measured outcomes from simulated or controlled-harness behavior.
+- Record the scenario, configuration, execution conditions, and relevant artifacts.
+- Compare equivalent conditions before attributing an outcome to a particular security control.
+- Report failures, unavailable configurations, and missing observations.
+- Do not claim statistical significance or generalization without suitable experimental evidence.
+
+Some benchmark infrastructure may use controlled harness doubles or simulated baselines. These are useful for testing experimental plumbing, but they are not substitutes for measurements of real-world agent performance.
+
+## Getting started
+
+ATLAS-X is intended to be run locally. The instructions below reflect the documented development workflow; verify environment-specific requirements against the current repository before running it.
+
+### Prerequisites
+
+- Git
+- Python 3.11
+- Node.js and npm compatible with the frontend dependencies
+- A supported Windows or Linux development environment
+- WSL2 with Ubuntu 24.04 for execution paths that require it
+- Ollama and a compatible local model, if using local model inference
+
+### 1. Clone the repository
 
 ```bash
-# 1. Clone and enter repository
+git clone https://github.com/n0tify/ATLAS-X.git
 cd ATLAS-X
-
-# 2. Create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\Activate.ps1   # Windows PowerShell
-# source .venv/bin/activate  # Linux/macOS
-
-# 3. Install Python dependencies
-pip install -e ".[dev]"
-
-# 4. Install frontend dependencies
-cd frontend
-npm install
-cd ..
 ```
 
-## Environment configuration
+### 2. Set up the Python environment
 
-Copy `.env.example` to `.env` and adjust:
+Create and activate a virtual environment.
+
+**Windows PowerShell**
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
+
+**Linux**
 
 ```bash
-ATLAS_ENVIRONMENT=development
-ATLAS_DATABASE_PATH=data/atlas.db
-ATLAS_APPLICATION_SECRET_KEY=   # required in production
-ATLAS_MODEL_BASE_URL=http://127.0.0.1:11434
-ATLAS_MODEL_NAME=llama3.1:8b
-CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
 ```
 
-Frontend: copy `frontend/.env.example` to `frontend/.env` (leave `VITE_API_BASE_URL` empty when served by backend).
-## Running the application
+If editable installation fails, check the development dependencies and package configuration in `pyproject.toml`.
 
-Backend (Terminal 1):
+### 3. Configure environment variables
+
+Start from the repository's `.env.example` and follow the variable names and instructions defined by the current configuration.
+
+Do not commit populated environment files, credentials, authentication tokens, private datasets, or local databases.
+
+Use unique development credentials and keep secrets out of source control. Do not expose a development server directly to the public internet.
+
+### 4. Start the backend
+
+From the project root, with the virtual environment active:
+
 ```bash
 python -m uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
-Frontend (Terminal 2):
+This command assumes the repository's documented `api:app` entry point is available.
+
+### 5. Start the frontend
+
+Open a second terminal:
+
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-- Frontend: http://localhost:5173
-- Backend API: http://127.0.0.1:8000
-- API docs (Swagger): http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/health
-- Readiness: http://127.0.0.1:8000/ready
+Use the frontend's configured development URL and ensure its API configuration points to the running backend.
 
-## Local model setup (optional, for planning)
+### 6. Configure optional local inference
+
+If you intend to use Ollama, install it separately and download a compatible model.
+
+For example:
 
 ```bash
-# Install Ollama (https://ollama.com), then:
 ollama pull llama3.1:8b
-ollama serve
 ```
 
-Without Ollama, planning is unavailable but other features work. The model endpoint is loopback-only by design.
+Model availability, hardware requirements, and supported integration behavior depend on your local setup. Local inference is optional for workflows that use the deterministic tools and supported analysis operations.
 
-## Sandbox requirements
+### 7. Run the quality checks
 
-Tool execution requires WSL2 on Windows (Ubuntu-24.04 distribution). Without WSL2, tool calls fail rather than running in-process. This is intentional: there is no unrestricted host fallback.
+Run the checks configured by the repository and inspect their exit codes.
 
-## Testing and verification
-
-Backend:
 ```bash
-python -m pytest -q --ignore=tests/test_planner_live.py
-python -m ruff check .
-python -m mypy atlas
+pytest
+ruff check .
+mypy .
 ```
 
-Frontend (from `frontend/`):
+For the frontend:
+
 ```bash
+cd frontend
 npm run lint
 npm run build
-npx playwright test
 ```
 
-Live planner tests (requires Ollama):
-```bash
-python -m pytest tests/test_planner_live.py
+Run Playwright tests separately if the corresponding browser-test configuration and dependencies are installed.
+
+A command completing successfully is evidence for that particular check and environment, not a universal guarantee that every feature or security property works.
+
+## Repository structure
+
+The repository is organized around the backend, frontend, execution infrastructure, experiments, tests, and project documentation.
+
+```text
+ATLAS-X/
+├── .github/
+│   └── workflows/       # CI workflows
+├── api/                 # Application API
+├── atlas/               # Core platform implementation
+├── benchmarks/          # Benchmark scenarios and evaluation
+├── datasets/            # Dataset-related resources
+├── docker/              # Container-related configuration
+├── docs/                # Architecture, security, and design docs
+├── experiments/         # Experimental configurations and runs
+├── frontend/            # React and TypeScript interface
+├── reports/             # Research and evaluation reports
+├── scripts/             # Development and utility scripts
+├── tests/               # Automated tests
+├── .env.example         # Environment configuration template
+├── CONTRIBUTING.md      # Contribution guidelines
+├── LICENSE              # Project license
+├── SECURITY.md          # Security reporting guidance
+├── pyproject.toml       # Python tooling and project configuration
+└── README.md
 ```
 
-Current verified results: 737 backend tests passed, Ruff clean, mypy clean (94 files), ESLint clean, production build succeeded, Playwright 21/21 passed.
+Individual paths and responsibilities may evolve. Use the checked-out repository as the source of truth.
 
-## Research and benchmark reproducibility
+## Security and limitations
 
-Benchmark and experiment infrastructure exists under `benchmarks/`, `experiments/`, and `datasets/`. The frontend includes a Benchmarks page and backend benchmark endpoints exist in `api/routers/benchmarks.py`.
+Security is a central research concern in ATLAS-X, but the prototype must not be mistaken for a hardened production agent platform.
 
-Status: experimental. No benchmark results are claimed. The acceptance tests check page loading and control visibility only. Some security properties in `benchmarks/atlas_bench/runner/atlas_integration.py` are derived from scenario IDs, baseline harness flags, and task status rather than independently observed attack outcomes. `BaselineConfiguration.BASELINE_0` is explicitly simulated. Ablation modes use controlled harness doubles.
+The following limitations have been identified in the project's documented design and should be considered when evaluating it.
 
-See `docs/ATLAS_BENCH.md`, `docs/EXPERIMENT_PROTOCOL.md`, `docs/METRICS.md`, and `docs/REPRODUCIBILITY.md`. Record measured results under `reports/` or `experiments/output/`; do not fabricate results.
+| Area | Limitation and implication |
+|---|---|
+| Browser token storage | Tokens held in `localStorage` can be exposed by successful same-origin JavaScript injection. |
+| CSRF | Missing CSRF protections may matter if the authentication architecture relies on browser-managed credentials or cookies. |
+| Account recovery | MFA and account-recovery capabilities are not implemented as complete production features. |
+| Rate limiting | In-process controls may reset when the service restarts and may not coordinate across multiple workers. |
+| Execution isolation | WSL2 and subprocess boundaries do not automatically provide container-grade or hostile-code isolation. |
+| Provenance | Hash-linked records help identify some modifications but do not independently authenticate event origins. |
+| Host security | A compromised operating system or privileged administrator remains outside the protection of application-level checks. |
+| Accessibility | A full WCAG 2.2 AA audit has not been established. |
+| Readiness checks | Dependency-aware readiness and comprehensive operational health guarantees are not established. |
 
-## Security model and threat assumptions
+These are not merely documentation footnotes. They define what can and cannot responsibly be claimed about the platform.
 
-- Password storage: Argon2id via `argon2-cffi`. Plaintext passwords never stored or logged.
-- Sessions: opaque tokens (`secrets.token_urlsafe(32)`); only SHA-256 digest stored in SQLite.
-- Expiry: explicit `expires_at`; expired sessions purged lazily.
-- Rate limiting/lockout: per-account consecutive-failure tracking with temporary lockout; constant delay on failed auth; successful login resets counter.
-- Error behavior: single generic error regardless of whether account exists.
-- Authorization: deny-by-default `AuthorizationService`; ownership is the only grant; no roles or elevation path.
-- Sandbox: WSL2 guest, no in-process fallback; output re-validated on host.
-- Secrets redaction: `SecretsRedactionFilter` attached to root logger at startup.
+### Safe-use guidance
 
-Non-guarantees (see `SECURITY.md`):
-- No protection against compromised host or local admin.
-- No DDoS-grade rate limiting (in-process, resets on restart).
-- No MFA or account recovery.
-- No CSRF protection (no browser cookie auth yet; Bearer token in localStorage).
-- Frontend stores auth token in `localStorage` (XSS exposure).
-- Provenance digests are not signatures.
-- WSL2/subprocess is not container-grade isolation.
+- Run the prototype in a controlled development environment.
+- Use synthetic or non-sensitive research data.
+- Do not execute untrusted code on a machine containing sensitive credentials.
+- Keep the backend bound to localhost unless a separately reviewed deployment configuration is used.
+- Do not assume that a task marked successful is necessarily safe or correct.
+- Treat provenance records as diagnostic evidence, not as an independently trusted security authority.
+- Review `SECURITY.md` before reporting a vulnerability.
 
-## Known limitations and non-goals
+**Not intended for:** production deployment involving sensitive data, autonomous access to critical systems, or execution of hostile code without additional security engineering and independent review.
 
-- Containerization is not implemented.
-- Readiness checks the database only; dependency-aware readiness is partial.
-- Only local model endpoints are supported.
-- Full WCAG/multi-viewport visual audit is pending.
-- License is pending (`LICENSE` is a placeholder).
-- Lockout is in-process and resets on restart.
-- No MFA or account recovery.
-- `SecretsRedactionFilter` covers configured secret values only.
+## Testing and reproducibility
 
-## Deployment compatibility
+ATLAS-X includes automated testing and code-quality tooling for validating implementation behavior.
 
-ATLAS-X requires Python 3.11, Node 20 (build-time), SQLite persistence, local Ollama (optional), and WSL2 (for sandbox).
+The project has previously reported passing backend tests, static analysis, frontend linting, production builds, and browser tests. Those historical reports should not be interpreted as results independently verified for every current commit.
 
-| Target | Feasible? | Notes |
-|---|---|---|
-| Local demo (Windows + WSL2 + Ollama) | Yes | Full capability. |
-| Single-host self-managed (Windows + WSL2 + Ollama) | Yes | Full capability; owner manages backups. |
-| Conventional managed cloud (no WSL2/Ollama) | Reduced only | Planner/sandbox unavailable; do not claim full execution. |
+For reproducible reporting, record:
 
-Containerization is not recommended for the full sandbox path. See `docs/DEPLOYMENT_GUIDE.md`.
+1. The exact Git commit.
+2. Python and Node.js versions.
+3. Dependency and configuration details.
+4. The commands executed and their exit codes.
+5. Test counts, failures, and skipped tests.
+6. Benchmark scenarios and configurations.
+7. Whether each reported outcome came from a real execution, a controlled test double, or a simulated baseline.
+
+Do not publish a passing-test count or benchmark score unless it can be traced to a specific run and environment.
+
+## Roadmap
+
+Potential next steps for the research prototype include:
+
+- Strengthen browser authentication and session protections.
+- Improve execution isolation and resource enforcement.
+- Expand independent verification and adversarial test coverage.
+- Improve provenance integrity through stronger key management and external anchoring where appropriate.
+- Formalize benchmark methodology and clearly separate simulated baselines from measured results.
+- Improve accessibility, observability, and operational readiness checks.
+- Publish reproducible experiment reports tied to specific commits.
+- Add a short demonstration of the end-to-end research workflow.
+
+Roadmap items are intended directions, not claims that these capabilities already exist.
 
 ## Contributing
 
-Install into a venv, then run `python -m pytest`, `ruff check .`, and `mypy atlas` before proposing changes. Scope reads and writes to the project directory. Never commit secrets, `.env`, databases, or generated artifacts. Benchmark claims must be reproducible and recorded under `reports/` or `experiments/output/`.
+Contributions that improve correctness, reproducibility, security, or documentation are welcome.
 
-See `CONTRIBUTING.md`.
+1. Read `CONTRIBUTING.md`.
+2. Review the architecture and threat-model documentation.
+3. Create a focused branch for your change.
+4. Add or update tests where appropriate.
+5. Run the relevant backend and frontend checks.
+6. Document security implications and known limitations.
+7. Open a pull request describing the change, its verification, and any remaining risks.
+
+For security-sensitive issues, follow the reporting guidance in `SECURITY.md` rather than publishing exploit details in a public issue.
+
+## Research and design documentation
+
+Start with these repository documents for a deeper technical review:
+
+- `docs/DECISIONS.md` for architectural decisions.
+- `docs/THREAT_MODEL.md` for assets, trust boundaries, and threat analysis.
+- `docs/ARCHITECTURE_RECONCILIATION.md` for architecture alignment.
+- `docs/CONFIGURATION_REVIEW.md` for configuration-related findings.
+- `docs/STORAGE_REVIEW.md` for persistence and storage decisions.
+- `docs/AUTHENTICATION_REVIEW.md` for authentication analysis.
+- `docs/UI_ARCHITECTURE.md` for the research workspace structure.
+
+Use the files present in the current repository to confirm the availability and names of these documents.
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for the full text.
+The repository contains a `LICENSE` file. Confirm its contents and the intended copyright notice before publication, then state the actual license here.
 
-Note: third-party dependencies and model weights (e.g., Meta Llama 3.1) retain their own licenses. "Freely downloadable" does not imply "OSI-approved open source." Replace `[Your Name]` in `LICENSE` with the copyright holder's legal name before publication.
+If the project is distributed under the MIT License, retain the complete MIT license text in `LICENSE` and use the following statement only after that has been verified:
 
-## Acknowledgements
+> This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-ATLAS-X builds on FastAPI, Pydantic, Argon2, React, Vite, Playwright, pytest, Ruff, and mypy. Model weights (e.g., Meta Llama 3.1) are licensed separately and are not OSI-approved open source. Dependency and model-weight licenses apply regardless of ATLAS-X's own license status.
+---
+
+<p align="center">
+  <strong>ATLAS-X</strong><br>
+  Researching more reliable, inspectable, and reproducible AI agent systems.
+</p>
