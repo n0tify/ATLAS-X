@@ -1,222 +1,198 @@
-# ATLAS-X
-### Engineering AI Agents You Can Inspect, Constrain, and Verify.
+# ◈ ATLAS-X
+
+### Make AI agents accountable.
+
+**A local-first research platform for controlled execution, independent verification, provenance, and reproducible experimentation.**
 
 <p align="center">
-  <strong>LOCAL-FIRST AI · CONTROLLED EXECUTION · SECURITY ENGINEERING · REPRODUCIBLE RESEARCH</strong>
+  <strong>LOCAL-FIRST AI · SECURITY ENGINEERING · VERIFIABLE EXECUTION · REPRODUCIBLE RESEARCH</strong>
 </p>
 
 <p align="center">
-  <em>What happens when an AI agent's plan is treated as a proposal, its tools as privileged capabilities, and its success as something that must be verified?</em>
+  [Python](https://www.python.org/) · [FastAPI](https://fastapi.tiangolo.com/) · [React](https://react.dev/) · [TypeScript](https://www.typescriptlang.org/) · [Ollama](https://ollama.com/) · [MIT License](LICENSE)
 </p>
 
-<p align="center">
-  <a href="https://github.com/n0tify/ATLAS-X">Repository</a> ·
-  <a href="https://github.com/n0tify/ATLAS-X/tree/main/docs/architecture">Architecture</a> ·
-  <a href="https://github.com/n0tify/ATLAS-X/blob/main/SECURITY.md">Security</a> ·
-  <a href="https://github.com/n0tify/ATLAS-X/blob/main/docs/KNOWN_LIMITATIONS.md">Limitations</a>
-</p>
+> **Plans aren't permissions. Execution isn't proof. Provenance isn't a signature.**
+
+[Explore the architecture](docs/architecture/) · [Security model](SECURITY.md) · [Known limitations](docs/KNOWN_LIMITATIONS.md)
 
 ---
 
-## THE PROBLEM
+## 🧭 Why ATLAS-X?
 
-**An AI agent saying it completed a task is not evidence that it did.**
+An AI agent can generate a plausible plan, request a tool, fail halfway through execution, and still describe the task as completed.
 
-A model can generate an invalid plan, request an unauthorized action, fail during execution, or report success despite an incorrect outcome. When planning, permissions, execution, and verification are blurred together, these failures become difficult to detect and even harder to investigate.
+A confident answer is not evidence. A prompt is not an authorization boundary. And a green status indicator is not a security certification.
 
-ATLAS-X explores a different approach.
+**ATLAS-X investigates how AI-agent workflows can become more constrained, inspectable, and verifiable.**
 
-It is a **local-first AI agent research platform** built around a simple principle:
+It combines local-model planning with application-controlled validation, tool authorization, bounded execution, outcome verification, persistent state, and provenance records.
 
-> **Intelligence proposes. Deterministic controls authorize. Execution produces evidence. Verification determines success.**
+The goal isn't to pretend that an LLM is perfectly reliable. It's to engineer the system around the ways it can fail.
 
-Instead of treating an LLM as an autonomous authority, ATLAS-X places it inside a controlled execution pipeline designed to make agent behavior more inspectable, constrained, and reproducible.
+## ✨ Inside the research workspace
 
-## SYSTEM OVERVIEW
+### 01 · The dashboard
+
+A central workspace for navigating tasks, the research playground, benchmarks, security, and provenance.
+
+![ATLAS-X dashboard](docs/assets/01-dashboard.png)
+
+### 02 · Create a research task
+
+Define a research goal and inspect the available tools before execution.
+
+![ATLAS-X task configuration](docs/assets/02-create-research-task.png)
+
+### 03 · Explore tools
+
+Inspect a selected tool's description and input parameters in the research playground.
+
+![ATLAS-X research playground](docs/assets/03-research-playground-tool.png)
+
+### 04 · Run and inspect experiments
+
+Explore scenarios, ablation configurations, and experiment history. The values shown are a development snapshot, not a validated performance comparison.
+
+![ATLAS-X benchmark workspace](docs/assets/04-benchmarks-experiments.png)
+
+### 05 · Investigate security state
+
+Explore task status, permissions, provenance, integrity, and security-related workflows.
+
+![ATLAS-X Security Center](docs/assets/05-security-center.png)
+
+### 06 · Verify provenance
+
+Inspect the interface's chain-verification result and associated task information. This demonstrates an integrity-check workflow, not a guarantee that the whole application is secure.
+
+![ATLAS-X provenance verification](docs/assets/06-provenance-verification.png)
+
+---
+
+## 🧠 How it works
 
 ```mermaid
 flowchart TD
-    U(["USER / TASK"])
-    API["FastAPI · Authentication"]
-    P["Local LLM Planner"]
-    V{"Deterministic<br/>Plan Validation"}
-    A{"Authorization &<br/>Tool Policy"}
-    X["Bounded Tool Execution"]
-    C["Independent Verification"]
-    DB[("SQLite · Persistent State")]
-    EV["Events · Provenance · Metrics"]
-    R["Failure Handling & Recovery"]
-    UI["React · TypeScript Research Workspace"]
-
-    U --> API
-    API --> P
-    P --> V
-    V -->|Valid| A
-    V -->|Rejected| R
-    A -->|Authorized| X
-    A -->|Denied| R
-    X --> C
-    C -->|Verified outcome| DB
-    C --> EV
-    C -->|Failure / incomplete outcome| R
-    R --> DB
-    DB --> UI
-    EV --> UI
+    U([User task]) --> API[FastAPI application]
+    API --> P[Local LLM planner]
+    P --> V{Deterministic validation}
+    V -->|Accepted| A{Tool authorization}
+    V -->|Rejected| F[Failure handling]
+    A -->|Allowed| E[Bounded execution]
+    A -->|Denied| F
+    E --> I[Independent verification]
+    I -->|Outcome recorded| DB[(SQLite)]
+    I -->|Failed or incomplete| F
+    F --> DB
+    DB --> PR[Events and provenance]
+    DB --> UI[React research workspace]
+    PR --> UI
 ```
 
-<sub>Conceptual architecture. Exact control flow and guarantees depend on the implemented component and runtime configuration.</sub>
+<sub>Conceptual architecture. Actual guarantees depend on the implemented component, tool, and runtime configuration.</sub>
+
+### The execution lifecycle
+
+| Stage | Responsibility |
+|---|---|
+| **Plan** | A local language model proposes a structured task plan. |
+| **Validate** | Application logic checks the plan against expected structure and constraints. |
+| **Authorize** | Tool access is evaluated against application-defined rules. |
+| **Execute** | Approved operations run through the configured execution controls. |
+| **Verify** | The outcome is assessed separately from the model's claim of success. |
+| **Record** | Task state, events, metrics, and provenance-related data are persisted. |
+| **Recover** | Selected failure paths and bounded recovery logic handle unsuccessful or incomplete operations. |
+
+The central design choice is separating **model-generated intent** from **application-enforced control**. That reduces reliance on the model to police its own behavior, without pretending to eliminate every implementation bug or attack path.
 
 ---
 
-## ENGINEERING PRINCIPLES
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 01 / Control over compliance
-
-**A prompt is not a security boundary.**
-
-Plans and tool arguments pass through application-defined validation and authorization rather than relying on the model to obey instructions.
-
-</td>
-<td width="50%" valign="top">
-
-### 02 / Verification over assertion
-
-**Execution is not the same as success.**
-
-Task outcomes are evaluated separately from the model's description of what happened.
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 03 / Local-first by design
-
-**Inference and research without mandatory paid APIs.**
-
-Ollama provides the local-model integration, while SQLite supports local application state and experiment records.
-
-</td>
-<td width="50%" valign="top">
-
-### 04 / Evidence over intuition
-
-**Make experiments inspectable and repeatable.**
-
-Structured configurations, execution records, metrics, and provenance support debugging and controlled evaluation.
-
-</td>
-</tr>
-</table>
-
----
-
-## WHAT'S INSIDE
-
-<details open>
-<summary><strong>01 · Agent planning and orchestration</strong></summary>
-
-- Local language-model integration through Ollama.
-- Structured task planning.
-- Deterministic validation before tool execution.
-- Explicit handling of rejected plans and execution failures.
-- Bounded recovery workflows.
-
-The model contributes reasoning and proposed actions. The surrounding application remains responsible for enforcing its execution rules.
-
-</details>
+## 🔬 Engineering principles
 
 <details>
-<summary><strong>02 · Tool execution and security boundaries</strong></summary>
+<summary><strong>🛡️ Controlled tool execution</strong></summary>
 
 - Tool registry and controlled dispatch.
 - Schema validation and authorization checks.
-- Authentication and owner-scoped task access.
+- Task ownership controls.
+- Bounded execution and selected failure-handling paths.
 - Sandboxing-oriented execution controls.
-- Fail-closed handling for selected production-sensitive configuration.
-- Security-related response headers and automated tests.
 
-The current Windows/WSL2 and subprocess execution model is not equivalent to hardened isolation against a determined attacker.
+The current Windows/WSL2 and subprocess approach is not equivalent to hardened container isolation.
 
 </details>
 
 <details>
-<summary><strong>03 · Verification, persistence and provenance</strong></summary>
+<summary><strong>✅ Independent verification</strong></summary>
 
-- Persistent task and execution state.
-- SQLite-first structured storage.
-- Structured event and evaluation records.
-- Provenance metadata and integrity-related digests.
-- Verification-oriented task outcomes.
-- Local research and inspection workflows.
+Task execution and assessment of its outcome are treated as separate concerns. The useful question isn't simply whether the model said it worked, but what evidence was recorded and whether the result satisfied the relevant checks.
 
-Provenance makes execution easier to inspect; a digest alone does not establish authenticity or provide a cryptographic signature.
+Verification guarantees depend on the verifier and task type.
 
 </details>
 
 <details>
-<summary><strong>04 · Benchmarking and experimentation</strong></summary>
+<summary><strong>🔗 Provenance and integrity</strong></summary>
 
-The research framework organizes experiments around scenarios, baselines, configurations, and evaluation metrics.
+- Structured execution and event records.
+- Hash-linked provenance-related data.
+- Integrity verification workflows.
+- Task-level inspection of provenance and events.
+- SQLite-backed local persistence.
 
-Its areas of investigation include:
-
-- Tool authorization and security.
-- Multi-step task execution.
-- Independent verification.
-- Provenance tracking.
-- Failure handling and recovery.
-- Ablation studies and baseline comparisons.
-
-These are research capabilities, not claims of demonstrated superiority. Quantitative performance claims require reproducible experiments and published results.
+Hash-linked records can help detect certain changes. A digest alone is not a digital signature, proof of authorship, or independently trusted attestation.
 
 </details>
 
 <details>
-<summary><strong>05 · Research workspace</strong></summary>
+<summary><strong>🧪 Reproducible experimentation</strong></summary>
 
-A React and TypeScript frontend connects to a FastAPI backend to support workflows around:
+The benchmark framework organizes scenarios, baseline configurations, ablation modes, and metrics.
 
-- Authentication and task management.
-- Task execution and inspection.
-- Tool visibility.
-- Security and provenance exploration.
-- Benchmark and experiment workflows.
+Research areas include security, multi-step execution, verification, provenance, and recovery.
+
+A benchmark interface is not itself evidence of superior performance. Meaningful comparisons require a documented protocol, appropriate baselines, repeatable runs, configuration details, and measured results.
+
+</details>
+
+<details>
+<summary><strong>💻 Local-first development</strong></summary>
+
+Ollama provides local-model integration, while SQLite supports local persistence. Core local-model workflows are designed to avoid mandatory paid hosted inference APIs.
+
+Model downloads, hardware requirements, and model licensing still apply.
 
 </details>
 
 ---
 
-## TECHNOLOGY STACK
+## 🧰 Technology stack
 
 | Layer | Technologies |
 |---|---|
-| Application backend | Python · FastAPI · Pydantic |
-| AI inference | Ollama · Locally hosted language models |
+| Backend | Python · FastAPI · Pydantic |
+| Local inference | Ollama · locally hosted language models |
 | Frontend | React · TypeScript · Vite |
-| Persistence | SQLite · Structured event/evaluation records |
-| Execution | Windows · WSL2 · Subprocess controls |
-| Testing | pytest · Playwright |
-| Code quality | Ruff · mypy · ESLint |
+| Persistence | SQLite |
+| Execution controls | Windows · WSL2 · subprocess-based controls |
+| Python quality | pytest · Ruff · mypy |
+| Frontend quality | Playwright · ESLint · production build |
 | Automation | GitHub Actions |
-
-The project prioritizes local development, explicit control boundaries, bounded resource use, and tools that can be used without mandatory paid inference services.
 
 ---
 
-## GETTING STARTED
+## 🚀 Run ATLAS-X locally
+
+ATLAS-X is a research and development project. Follow the current repository configuration and deployment guide if a command differs from your checkout.
 
 ### Prerequisites
 
 - Windows with PowerShell.
 - Python 3.11, subject to the project's declared compatibility.
-- Node.js and npm compatible with the frontend configuration.
+- Node.js and npm compatible with the frontend lockfile.
 - Git.
-- Ollama and a compatible local model for model-backed workflows.
+- Ollama and a compatible local model.
 - WSL2 for workflows that use the configured WSL2 execution environment.
 
 ### 1. Clone the repository
@@ -226,7 +202,7 @@ git clone https://github.com/n0tify/ATLAS-X.git
 cd ATLAS-X
 ```
 
-### 2. Set up Python
+### 2. Create a Python environment
 
 ```powershell
 py -3.11 -m venv .venv
@@ -235,13 +211,15 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-If the repository's current dependency configuration specifies a different development installation command, follow that configuration.
+If editable installation is not configured in the current checkout, follow the dependency installation instructions in `pyproject.toml` and the development guide.
 
 ### 3. Configure the environment
 
-Start from the available `.env.example` files and configure the required settings for your local environment.
+Use the provided `.env.example` files as templates. Supply the required settings and generate appropriate local secrets.
 
-Never commit actual credentials or production secrets. Generate appropriate local secrets and consult the deployment documentation for the required configuration.
+- Never commit actual credentials, tokens, or production secrets.
+- Do not reuse example values as production credentials.
+- Review `SECURITY.md` before exposing any service beyond your machine.
 
 ### 4. Install frontend dependencies
 
@@ -251,20 +229,18 @@ npm ci
 cd ..
 ```
 
-### 5. Set up the local model
+### 5. Prepare the local model
 
-Install Ollama from [ollama.com](https://ollama.com/), then obtain the model expected by the current project configuration.
-
-For the reported development setup:
+Install [Ollama](https://ollama.com/). The reported development setup used `llama3.1:8b`; use the model expected by the current configuration.
 
 ```powershell
 ollama pull llama3.1:8b
 ollama list
 ```
 
-Model availability, hardware requirements, and licensing depend on the selected model.
+Model availability, hardware requirements, and license terms depend on the selected model.
 
-### 6. Launch ATLAS-X
+### 6. Start the application
 
 The repository includes a PowerShell startup script:
 
@@ -272,13 +248,11 @@ The repository includes a PowerShell startup script:
 .\start_atlas.ps1
 ```
 
-Consult the current deployment and development documentation if your environment requires separate backend and frontend startup. Confirm the script's supported options in the checked-out version.
+Review the script and `docs/DEPLOYMENT_GUIDE.md` for supported options and any separate backend/frontend startup requirements. Confirm the API, frontend, and model service are healthy before testing a workflow.
 
 ---
 
-## QUALITY ENGINEERING
-
-ATLAS-X uses automated checks at several levels.
+## 🧪 Quality engineering
 
 ### Backend
 
@@ -287,6 +261,8 @@ python -m ruff check .
 python -m mypy atlas
 python -m pytest -q
 ```
+
+Some live-planning tests may require Ollama and the configured model.
 
 ### Frontend
 
@@ -298,80 +274,75 @@ npx playwright install
 npx playwright test
 ```
 
-Run commands from the appropriate project directory and ensure environment-dependent services are available.
-
-| Verification layer | Purpose |
+| Check | Purpose |
 |---|---|
 | Ruff | Python linting |
 | mypy | Static type analysis |
 | pytest | Python unit and integration tests |
 | ESLint | Frontend linting |
 | Vite build | Frontend production compilation |
-| Playwright | Browser-level workflow testing |
+| Playwright | Browser workflow tests |
 
-**Verification status:** The latest reported development checks passed Ruff, mypy across 86 source files, and staged/unstaged Git whitespace checks. Earlier reports recorded 737 backend tests and 21 Playwright tests passing, but those test counts were not rerun during the latest release-preparation pass. They are not presented as a freshly verified release result.
+**Previously reported verification:** Ruff passed, mypy reported no issues across 86 source files, and staged/unstaged Git whitespace checks passed. Earlier development reports recorded 737 backend tests and 21 Playwright tests passing, but those counts were not rerun during the latest release-preparation pass. Treat them as historical reports, not freshly reproduced release results.
 
-Passing tests is useful evidence, not a proof of security or production readiness.
+Passing tests are useful evidence, not proof of security or correctness for every workload.
 
 ---
 
-## SECURITY MODEL & LIMITATIONS
+## 🔐 Security model and limitations
 
-Security is part of the architecture, but the trust boundary must be described honestly.
+Security claims should be proportional to the evidence. ATLAS-X includes security-oriented controls, but it is not presented as a security-certified or production-hardened multi-tenant service.
 
 | Area | Current position |
 |---|---|
-| Authentication and authorization | Implemented application controls with tests |
-| Plan and tool validation | Deterministic validation and authorization boundaries |
-| Execution isolation | WSL2/subprocess controls; not hardened container isolation |
-| Browser authentication | `localStorage` token storage presents an XSS exposure risk |
-| Provenance | Integrity-related digests; not signed attestations |
-| Account protection | MFA and account recovery are incomplete |
-| Production operations | Remote deployment and TLS/reverse-proxy configuration remain unverified |
+| Authentication and authorization | Application controls are implemented and have associated tests. |
+| Plan and tool validation | Deterministic validation and authorization boundaries are used. |
+| Execution isolation | WSL2/subprocess controls; not hardened container isolation. |
+| Browser token storage | `localStorage` creates exposure risk if an XSS vulnerability occurs. |
+| Provenance | Integrity-related digests; not signed attestations. |
+| Account protection | MFA and account recovery are incomplete. |
+| Remote deployment | TLS, reverse-proxy configuration, and remote operations remain unverified. |
 
-ATLAS-X should be treated as a **research and development platform**, not a security-certified service or a production-hardened multi-tenant agent runtime.
+Before using ATLAS-X with untrusted workloads, review [`SECURITY.md`](SECURITY.md), [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md), and the architecture documentation.
 
-Before exposing it to untrusted workloads, review [`SECURITY.md`](SECURITY.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
-
-Security reports should follow the private reporting guidance in `SECURITY.md`, where configured.
+A development instance should not be exposed directly to the public internet merely because the interface loads.
 
 ---
 
-## RESEARCH DIRECTIONS
+## 🧭 Research directions
 
-The most interesting question is not whether an agent can complete a demonstration. It is whether the system can establish what happened, why it was permitted, and whether the outcome satisfies its requirements.
+ATLAS-X supports investigation of questions such as:
 
-ATLAS-X provides a foundation for investigating questions such as:
+1. **Authorization:** How effectively can application-defined policies constrain model-proposed tool use?
+2. **Verification:** Which task-specific checks distinguish completed operations from plausible completion claims?
+3. **Provenance:** What records are necessary to investigate an execution and reproduce its relevant conditions?
+4. **Recovery:** How do bounded recovery strategies affect outcomes under controlled failure conditions?
+5. **Ablation:** What changes when individual controls are disabled in a controlled experimental setup?
+6. **Reproducibility:** How can scenarios, configurations, software versions, and model settings be recorded consistently?
 
-- How effectively can deterministic policy checks constrain model-proposed actions?
-- How can verification distinguish actual task completion from a plausible textual claim?
-- Which provenance records are necessary to reproduce and investigate an execution?
-- How do recovery strategies affect reliability under controlled failure conditions?
-- What trade-offs emerge between model flexibility, execution constraints, and verifiability?
-
-The next step for this research is controlled evaluation: explicit hypotheses, reproducible configurations, documented baselines, and measured results.
+The next research step is rigorous evaluation: explicit hypotheses, repeatable configurations, meaningful baselines, measured outcomes, and clear limitations.
 
 ---
 
-## PROJECT STRUCTURE
+## 🗺️ Repository structure
 
 ```text
 ATLAS-X/
-├── .github/workflows/     # CI automation
-├── api/                   # FastAPI application and routers
-├── atlas/                 # Core agent and execution modules
+├── .github/workflows/      # CI automation
+├── api/                    # FastAPI application and routers
+├── atlas/                  # Core agent, security, storage and execution modules
 ├── benchmarks/
-│   └── atlas_bench/       # Experiment and benchmark framework
-├── datasets/              # Dataset definitions
+│   └── atlas_bench/        # Experiment and benchmark framework
+├── datasets/               # Dataset definitions
 ├── docs/
-│   ├── architecture/      # System architecture and trade-offs
-│   └── development/       # Development and research guidance
+│   ├── architecture/       # Architecture and trade-offs
+│   ├── development/        # Development and research guidance
+│   └── assets/             # README screenshots
 ├── frontend/
-│   ├── src/               # React and TypeScript workspace
-│   └── tests/             # Browser and acceptance tests
-├── scripts/               # Development utilities
-├── tests/                 # Python test suite
-├── .env.example
+│   ├── src/                # React and TypeScript application
+│   └── tests/              # Browser and acceptance tests
+├── scripts/                # Development utilities
+├── tests/                  # Python test suite
 ├── CONTRIBUTING.md
 ├── LICENSE
 ├── README.md
@@ -379,13 +350,13 @@ ATLAS-X/
 └── pyproject.toml
 ```
 
-Generated databases, credentials, browser state, local environments, logs, caches, and temporary scripts are intentionally excluded from the public source release.
+Generated databases, local environments, browser state, logs, caches, temporary scripts, and private credentials should remain outside the public source release.
 
 ---
 
-## ROADMAP
+## 🛣️ Roadmap
 
-- [ ] Harden execution isolation and validate the threat boundary.
+- [ ] Harden execution isolation and validate trust boundaries.
 - [ ] Improve browser authentication and account-security controls.
 - [ ] Explore signed provenance attestations.
 - [ ] Expand controlled fault-injection and recovery experiments.
@@ -393,37 +364,35 @@ Generated databases, credentials, browser state, local environments, logs, cache
 - [ ] Extend automated dependency and security checks.
 - [ ] Validate remote deployment, TLS, reverse-proxy configuration, and operational monitoring.
 
-This roadmap describes potential future work, not completed functionality.
+Roadmap items describe future work, not completed functionality.
 
----
+## 🤝 Contributing
 
-## CONTRIBUTING
-
-Contributions to security, reliability, reproducibility, and developer experience are welcome.
+Contributions focused on security, reliability, reproducibility, testing, and developer experience are welcome.
 
 1. Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
-2. Understand the architecture and documented limitations.
+2. Review the architecture and known limitations.
 3. Make a focused, testable change.
 4. Add or update tests where appropriate.
-5. Run relevant quality checks.
-6. Document changes that affect security boundaries or execution behavior.
+5. Run the relevant quality checks.
+6. Document changes affecting security boundaries, execution behavior, or reproducibility.
 
 Do not submit credentials, private data, generated local databases, or unreviewed execution artifacts.
 
----
+## 📄 License
 
-## LICENSE
+The original ATLAS-X project code is distributed under the [MIT License](LICENSE).
 
-ATLAS-X's original project code is distributed under the [MIT License](LICENSE).
-
-Third-party dependencies, assets, and model weights may be governed by separate licenses and terms. The project's license does not supersede those obligations.
+Third-party dependencies, assets, and model weights may be subject to separate licenses and terms. The project's license does not override those obligations.
 
 ---
 
-<p align="center">
-  <strong>ATLAS-X</strong>
-  <br/>
-  <em>From model-generated plans to controlled, inspectable execution.</em>
-  <br/><br/>
-  <sub>Built around a simple idea: an intelligent system should be evaluated by what it can demonstrate, not merely what it can claim.</sub>
-</p>
+<div align="center">
+
+### ATLAS-X
+
+**From model-generated plans to controlled, inspectable execution.**
+
+*Build systems that can explain not just what they intended to do, but what the evidence says happened.*
+
+</div>
