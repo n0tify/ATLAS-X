@@ -67,14 +67,12 @@ A dedicated sign-in interface for accessing the research workspace.
 The dashboard presents the research environment and a lifecycle visualization covering task creation, planning, authorization, tool execution, sandboxing, verification, artifacts, and provenance.
 <img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b8dc6137-f446-4c3c-88a1-8e1522f247cc" />
 
-![ATLAS-X research dashboard and lifecycle map](docs/assets/dashboard.png)
 
 ### 3. Create a research task
 
 Define a task title and research goal, then inspect the tools available to the workspace.
 <img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/6765d142-8644-466a-af60-035544a01299" />
 
-![ATLAS-X task configuration interface](docs/assets/create-task.png)
 
 ### 4. Research Playground
 
@@ -88,8 +86,6 @@ Browse registered tools, inspect tool metadata and input parameters, and interac
 Explore supported scenarios, select experimental configurations, and inspect recorded experiment history.
 <img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b0684cec-5e1e-4490-a329-2bb16fd9224b" />
 
-![ATLAS-X benchmark overview and experiment history](docs/assets/benchmarks.png)
-
 Benchmark availability and recorded experiment counts are not, by themselves, evidence of improved agent performance. Interpret results using the corresponding methodology and limitations.
 
 ### 6. Security Center
@@ -97,22 +93,16 @@ Benchmark availability and recorded experiment counts are not, by themselves, ev
 Inspect task-level information, permission views, provenance, integrity checks, and security-relevant events.
 <img width="959" height="431" alt="image" src="https://github.com/user-attachments/assets/352f5842-61d8-44cf-95de-066889cd8d95" />
 
-![ATLAS-X Security Center](docs/assets/security-center.png)
-
 ### 7. Provenance Explorer
 
 Browse recorded task events and examine their associated chain digests.
-
-![ATLAS-X provenance chain explorer](docs/assets/provenance-chain.png)
+<img width="959" height="433" alt="image" src="https://github.com/user-attachments/assets/b39c627e-79da-420a-af43-6b163352577c" />
 
 ### 8. Integrity verification
 
 Inspect the reported outcome of a provenance-chain integrity check.
 <img width="959" height="434" alt="image" src="https://github.com/user-attachments/assets/b9780bdd-2ee5-4ec4-a950-037cb5ccb9f5" />
 
-![ATLAS-X provenance integrity verification](docs/assets/provenance-verification.png)
-
-**Screenshot setup:** Save the nine supplied screenshots using the filenames above. Keep the images genuine and unaltered except for cropping or redacting sensitive information. In particular, remove email addresses, tokens, private task data, and other account information before publishing.
 
 ## Architecture
 
