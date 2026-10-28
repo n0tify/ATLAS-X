@@ -307,5 +307,52 @@ def category_for_code(code: str) -> str:
     return CODE_TO_CATEGORY.get(code, "internal_error")
 
 
+def task_failure_category(categories: list[str]) -> str:
+    """Derive the overall task failure category from a list of failure categories.
+
+    Priority order (highest first):
+    1. security_blocked (includes sandbox_violation)
+    2. authorization_denied
+    3. plan_invalid
+    4. plan_state_mismatch
+    5. dependency_invalid
+    6. tool_output_invalid
+    7. result_unreadable
+    8. verification_failed
+    9. artifact_failed
+    10. recovery_exhausted
+    11. tool_execution_failed
+    12. resource_limit
+    13. tool_input_invalid
+    14. internal_error (fallback)
+
+    This matches the ordering in NON_RECOVERABLE_CATEGORIES and
+    RECOVERABLE_CATEGORIES, with non-recoverable taking precedence.
+    """
+
+    priority = [
+        "security_blocked",
+        "sandbox_violation",
+        "authorization_denied",
+        "plan_invalid",
+        "plan_state_mismatch",
+        "dependency_invalid",
+        "tool_output_invalid",
+        "result_unreadable",
+        "verification_failed",
+        "artifact_failed",
+        "recovery_exhausted",
+        "tool_execution_failed",
+        "resource_limit",
+        "tool_input_invalid",
+        "internal_error",
+    ]
+
+    for cat in priority:
+        if cat in categories:
+            return cat
+    return "internal_error"
+
+
 class FailureWriteInvalid(ValueError):
     """A caller tried to write a failure the schema could not honestly hold."""

@@ -26,12 +26,11 @@ class Database:
     def _configure(conn: sqlite3.Connection) -> None:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 10000")
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._path), timeout=self._timeout)
+        conn = sqlite3.connect(str(self._path), timeout=10.0)
         self._configure(conn)
         return conn
 
@@ -65,6 +64,7 @@ class Database:
         try:
             conn.isolation_level = None
             conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("PRAGMA journal_mode = WAL")
             upgrade_to_v3(conn)
         finally:
             conn.close()

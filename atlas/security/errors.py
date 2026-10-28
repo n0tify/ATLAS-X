@@ -74,3 +74,24 @@ class ResultUnpublishable(AuthorizationError):
         self, reason: DenyReason = DenyReason.OPERATION_NOT_PERMITTED
     ) -> None:
         super().__init__(reason)
+
+
+class RecoveryNotPermitted(AuthorizationError):
+    """Recovery was attempted but the task/failure is not eligible.
+
+    Raised when a caller attempts to recover from a failure that is not
+    recoverable (e.g., sandbox violation, authorization denied) or when
+    the recovery limit has been exhausted.
+    """
+
+    def __init__(
+        self, reason: DenyReason = DenyReason.OPERATION_NOT_PERMITTED
+    ) -> None:
+        super().__init__(reason)
+
+
+class FailureCategoryNotDerived(AuthorizationError):
+    """A caller tried to set a task's status to 'failed' directly.
+
+    The failure category must be derived from recorded failures, not supplied.
+    """

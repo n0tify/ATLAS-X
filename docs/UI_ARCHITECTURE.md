@@ -2292,7 +2292,7 @@ before visualization, accessibility and honesty before polish.
 | DD-21 | Whether the Map is a separate process, a separate origin, or a served static bundle | follows from D-07 and the deployment posture |
 | DD-22 | Benchmark and experiment screen detail | no harness, no ownership decision (D-09 below) |
 | DD-23 | Search implementation (SQLite FTS vs in-memory filter) for the provenance explorer | no FTS table exists; needs a volume estimate |
-| DD-24 | Retention, export formats, and report layout for `reports/` | `docs/CONTRIBUTING.md` requires results committed with their configs; format decision is a later phase |
+| DD-24 | Retention, export formats, and report layout for `reports/` | `CONTRIBUTING.md` requires results committed with their configs; format decision is a later phase |
 | DD-25 | Whether a role/permission concept is ever surfaced in the UI | roles are Phase 08 and residual risk is Hi; the UI must not invent a role display |
 
 ## 25.3 Decisions requiring human approval (blocking)

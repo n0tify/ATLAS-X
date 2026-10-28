@@ -287,6 +287,15 @@ def violation_code(error: BaseException) -> str:
     """The audit code to record for a sandbox failure."""
 
     if isinstance(error, ToolError):
+        # For SandboxViolation, parse the violation type from the message.
+        if isinstance(error, SandboxViolation):
+            msg = str(error)
+            # Message format: "sandbox control violated (network_access): detail"
+            if "(" in msg and ")" in msg:
+                start = msg.find("(") + 1
+                end = msg.find(")")
+                if start > 0 and end > start:
+                    return msg[start:end]
         return error.code
     return ToolErrorCode.SANDBOX_UNAVAILABLE
 

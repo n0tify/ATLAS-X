@@ -6,12 +6,14 @@ import sys
 
 from atlas.auth.service import AuthService
 from atlas.config.settings import Settings
+from atlas.logging_config import configure_logging
 from atlas.storage.db import Database
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     settings = Settings.from_environ()
+    configure_logging(settings)
     db = Database(settings.database_path)
     db.initialize()
     AuthService(db, settings).bootstrap()

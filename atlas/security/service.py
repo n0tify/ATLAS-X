@@ -519,6 +519,36 @@ class AuthorizationService:
             error_code=error_code,
         )
 
+    def record_failure_by_code(
+        self,
+        session_token: object,
+        *,
+        execution_id: object,
+        code: str,
+        detail: str,
+        plan_step_id: int | None = None,
+        invocation_id: str | None = None,
+    ) -> int:
+        """Record a classified failure for an execution whose code is known.
+
+        For findings that are not exceptions -- a verifier's FAIL verdict being
+        the case that matters. The category is looked up from the closed
+        vocabulary, so this cannot be used to publish a category of the caller's
+        choosing.
+        """
+
+        identity = self.authenticate(session_token)
+        eid = self._as_id(execution_id, Resource.EXECUTION)
+        self._permit(identity, Resource.FAILURE, Operation.CREATE)
+        return self._failures.record_failure_code(
+            session_token,
+            execution_id=eid,
+            code=code,
+            detail=detail,
+            plan_step_id=plan_step_id,
+            invocation_id=invocation_id,
+        )
+
     def get_failure(
         self, session_token: object, failure_id: object
     ) -> dict[str, Any] | None:

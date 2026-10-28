@@ -631,8 +631,9 @@ def test_evaluation_runs_are_denied_by_name(
     token = _token(auth, "alice")
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO evaluation_runs (run_name, config_json, created_at) VALUES (?,?,?)",
-            ("baseline", "{}", "t"),
+            "INSERT INTO evaluation_runs "
+            "(run_name, config_json, created_at, user_id) VALUES (?,?,?,?)",
+            ("baseline", "{}", "t", 1),
         )
         run_id = _last_id(conn)
 

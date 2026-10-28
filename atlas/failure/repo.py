@@ -25,6 +25,7 @@ from atlas.failure.types import (
     FailureCode,
     FailureWriteInvalid,
     is_recoverable,
+    task_failure_category,
 )
 from atlas.util import utcnow_iso
 
@@ -95,6 +96,13 @@ class FailureRepo:
         if row is None:
             raise FailureWriteInvalid(f"no execution with id {execution_id} to record failure for")
 
+        # The `code` parameter is the failure code stored in error_code column.
+        # If `error_code` is also provided, it must match `code`.
+        if error_code is not None and error_code != code:
+            raise FailureWriteInvalid(
+                f"error_code {error_code!r} must match code {code!r}"
+            )
+
         # Determine retryability from category if not explicitly provided.
         if retryable is None:
             cat_enum = (
@@ -111,18 +119,17 @@ class FailureRepo:
 
         cursor = conn.execute(
             "INSERT INTO failures "
-            "(execution_id, category, code, detail, detail_json, plan_step_id, "
-            "invocation_id, error_code, retryable, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(execution_id, category, error_code, diagnosis, detail_json, plan_step_id, "
+            "invocation_id, retryable, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 category,
-                code,
-                encoded_detail,
+                code,  # failure code stored in error_code column
+                encoded_detail,  # detail stored in diagnosis column
                 encoded_detail_json,
                 plan_step_id,
                 invocation_id,
-                error_code,
                 retryable,
                 utcnow_iso(),
             ),
@@ -166,12 +173,16 @@ class FailureRepo:
         return self._row_to_failure(row) if row else None
 
     def _row_to_failure(self, row: sqlite3.Row) -> FailureRecord:
+        # The database has 'error_code' column; 'code' is an alias for it in the record.
+        code = row["code"] if "code" in row.keys() else row["error_code"]
+        # The database has 'diagnosis' column; 'detail' is an alias for it in the record.
+        detail = row["detail"] if "detail" in row.keys() else row["diagnosis"]
         return FailureRecord(
             id=row["id"],
             execution_id=row["execution_id"],
             category=row["category"],
-            code=row["code"],
-            detail=row["detail"],
+            code=code,
+            detail=detail,
             detail_json=row["detail_json"],
             plan_step_id=row["plan_step_id"],
             invocation_id=row["invocation_id"],
@@ -198,3 +209,39 @@ def _encode_json(value: Mapping[str, Any] | None, name: str) -> str | None:
 
 def _is_positive_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def derive_task_failure_category(
+    conn: sqlite3.Connection, task_id: int
+) -> tuple[str, int]:
+    """Derive the task's failure category from its recorded failures.
+
+    Returns a tuple of (category, failure_count).
+
+    Uses :func:`atlas.failure.types.task_failure_category` for the priority logic.
+    """
+
+    repo = FailureRepo()
+    failures = repo.for_task(conn, task_id)
+    if not failures:
+        return "internal_error", 0
+
+    categories = [f.category for f in failures]
+    category = task_failure_category(categories)
+    return category, len(failures)
+
+
+def derive_task_failure_categories(
+    conn: sqlite3.Connection, task_id: int
+) -> list[dict[str, Any]]:
+    """Get all failure records for a task, for recovery eligibility checks.
+
+    Returns a list of dicts with category and code for each failure.
+    """
+
+    repo = FailureRepo()
+    failures = repo.for_task(conn, task_id)
+    return [
+        {"category": f.category, "code": f.code, "id": f.id}
+        for f in failures
+    ]

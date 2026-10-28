@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class SchemaVersionError(RuntimeError):
@@ -286,7 +286,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         event_type TEXT NOT NULL,
         actor TEXT NOT NULL,
         detail_json TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
     )
     """,
     """
@@ -303,6 +304,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         ON provenance_events(task_id, sequence_no)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_provenance_events_user ON provenance_events(user_id)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS evaluation_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_name TEXT NOT NULL,
@@ -311,11 +315,15 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         results_json TEXT,
         started_at TEXT,
         finished_at TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
     )
     """,
     """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluation_runs_name ON evaluation_runs(run_name)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_evaluation_runs_user ON evaluation_runs(user_id)
     """,
     """
     CREATE TABLE IF NOT EXISTS tool_permissions (
@@ -335,6 +343,21 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_permissions_unique
         ON tool_permissions(user_id, tool_name, IFNULL(scope, ''))
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+        onboarding_completed INTEGER NOT NULL DEFAULT 0,
+        reduced_motion INTEGER NOT NULL DEFAULT 0,
+        high_contrast INTEGER NOT NULL DEFAULT 0,
+        theme_mode TEXT NOT NULL DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id)
     """,
 )
 
@@ -459,6 +482,15 @@ _V3_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+# V4 added columns: user_id ownership for evaluation_runs and provenance_events
+# Note: SQLite ALTER TABLE doesn't support adding FK constraints, so they are
+# declared in the CREATE TABLE statements for new databases only.
+_V4_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("evaluation_runs", "user_id INTEGER NOT NULL"),
+    ("provenance_events", "user_id INTEGER"),
+)
+
+
 class SchemaUpgradeError(RuntimeError):
     """A v2 database could not be brought forward to version 3."""
 
@@ -537,10 +569,13 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> bool:
     """
 
     if conn.in_transaction:
-        return _upgrade_to_v3(conn)
+        changed = _upgrade_to_v3(conn)
+        changed = _upgrade_to_v4(conn) or changed
+        return changed
     conn.execute("BEGIN")
     try:
         changed = _upgrade_to_v3(conn)
+        changed = _upgrade_to_v4(conn) or changed
     except BaseException:
         conn.execute("ROLLBACK")
         raise
@@ -583,6 +618,33 @@ def _upgrade_to_v3(conn: sqlite3.Connection) -> bool:
         if violations:
             raise SchemaUpgradeError(
                 f"upgrade to version {SCHEMA_VERSION} left {len(violations)} foreign "
-                "key violations; the database was left at its original shape"
+                f"key violations; the database was left at its original shape"
+            )
+    return changed
+
+
+def _upgrade_to_v4(conn: sqlite3.Connection) -> bool:
+    """The body of :func:`upgrade_to_v4`, run inside a transaction.
+
+    Adds user_id ownership columns to evaluation_runs and provenance_events.
+    """
+    check_schema_version(conn)
+    changed = False
+
+    for table, clause in _V4_ADDED_COLUMNS:
+        if not _table_exists(conn, table):
+            continue
+        column = clause.split()[0]
+        if column in _columns(conn, table):
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {clause}")
+        changed = True
+
+    if changed:
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise SchemaUpgradeError(
+                f"upgrade to version {SCHEMA_VERSION} left {len(violations)} foreign "
+                f"key violations; the database was left at its original shape"
             )
     return changed

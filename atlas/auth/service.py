@@ -20,7 +20,7 @@ from atlas.auth.password import (
 from atlas.auth.sessions import generate_session_token, hash_token
 from atlas.config.settings import Settings
 from atlas.storage.db import Database
-from atlas.storage.repositories import SessionRepo, UserRepo
+from atlas.storage.repositories import SessionRepo, UserPreferencesRepo, UserRepo
 from atlas.util import add_minutes_iso, is_later_than, utcnow_iso
 
 # Policy failures carry their own wording so the caller can show the exact
@@ -81,11 +81,13 @@ class AuthService:
         settings: Settings,
         user_repo: UserRepo | None = None,
         session_repo: SessionRepo | None = None,
+        preferences_repo: UserPreferencesRepo | None = None,
     ) -> None:
         self._db = db
         self._settings = settings
         self._users = user_repo or UserRepo()
         self._sessions = session_repo or SessionRepo()
+        self._prefs = preferences_repo or UserPreferencesRepo()
 
     def bootstrap(self) -> None:
         self._db.initialize()
@@ -150,13 +152,11 @@ class AuthService:
             return {"token": token, "user": self._public_user(conn, int(user["id"]))}
 
     def validate_session(self, token: str) -> dict[str, Any] | None:
+        now = utcnow_iso()
         with self._db.transaction() as conn:
-            self._sessions.delete_expired(conn, utcnow_iso())
-            session = self._sessions.get_valid(conn, hash_token(token))
+            self._sessions.delete_expired(conn, now)
+            session = self._sessions.get_valid(conn, hash_token(token), now)
             if session is None:
-                return None
-            now = utcnow_iso()
-            if not is_later_than(session["expires_at"], now):
                 return None
             return self._public_user(conn, int(session["user_id"]))
 
@@ -165,11 +165,15 @@ class AuthService:
             return self._sessions.revoke(conn, hash_token(token))
 
     def change_password(
-        self, user_id: int, current_password: str, new_password: str
+        self, session_token: str, current_password: str, new_password: str
     ) -> None:
         password_fault = password_problem(new_password)
         if password_fault is not None:
             raise PasswordRejected(_PASSWORD_MESSAGES[password_fault])
+        identity = self.validate_session(session_token)
+        if identity is None:
+            raise AuthenticationFailed("invalid username or password")
+        user_id = int(identity["id"])
         with self._db.transaction() as conn:
             user = self._users.get_by_id(conn, user_id)
             if user is None:
@@ -178,6 +182,22 @@ class AuthService:
                 raise AuthenticationFailed("invalid username or password")
             self._users.update_password_hash(conn, user_id, hash_password(new_password))
             self._sessions.revoke_all_for_user(conn, user_id)
+
+    def get_onboarding_completed(self, user_id: int) -> bool:
+        with self._db.transaction() as conn:
+            return self._prefs.get_onboarding_completed(conn, user_id)
+
+    def mark_onboarding_completed(self, user_id: int, *, completed: bool = True) -> None:
+        with self._db.transaction() as conn:
+            self._prefs.mark_onboarding_completed(conn, user_id, completed=completed)
+
+    def get_preferences(self, user_id: int) -> dict[str, Any]:
+        with self._db.transaction() as conn:
+            return self._prefs.get_all(conn, user_id)
+
+    def set_preferences(self, user_id: int, **fields: Any) -> None:
+        with self._db.transaction() as conn:
+            self._prefs.set(conn, user_id, **fields)
 
     def _public_user(self, conn: sqlite3.Connection, user_id: int) -> dict[str, Any]:
         user = self._users.get_public(conn, user_id)

@@ -98,12 +98,18 @@ def compute(context: ToolContext, arguments: Mapping[str, Any]) -> Mapping[str, 
             "no execution with that id exists for the authorized task"
         )
 
+    # The execution's own task owns its artifacts; use that rather than the
+    # caller's currently-selected task so an artifact lookup is not falsely
+    # refused when the playground's selected task differs from the execution's.
+    execution_task_id = execution.get("task_id")
+    artifact_task_id = int(execution_task_id) if execution_task_id is not None else context.task_id
+
     # Narrowed to the execution in SQL, not by filtering afterwards, so the
     # row cap cannot hide artifacts belonging to the requested execution.
     selected = view.list_rows(
         resource=Resource.ARTIFACT,
         user_id=context.user_id,
-        task_id=context.task_id,
+        task_id=artifact_task_id,
         parent_id=execution_id,
         limit=MAX_NAMES,
     )

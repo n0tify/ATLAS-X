@@ -11,7 +11,11 @@ requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2.5,<3",
   "argon2-cffi>=23.1,<25",
-  "streamlit>=1.35,<2",
+  "fastapi>=0.109,<0.112",
+  "uvicorn[standard]>=0.27,<0.33",
+  "python-multipart>=0.0.9,<0.0.13",
+  "python-jose[cryptography]>=3.3,<3.4",
+  "passlib[bcrypt]>=1.7.4,<1.8",
 ]
 
 [project.optional-dependencies]

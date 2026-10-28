@@ -316,16 +316,7 @@ VerificationErrorCode.STEP_UNREADABLE: FailureCode.MALFORMED_INPUT,
                 "tool execution failed",
                 {},
             )
-        if isinstance(exc, ToolError):
-            # Generic ToolError fallback.
-            return (
-                FailureCategory.TOOL_EXECUTION_FAILED.value,
-                FailureCode.TOOL_RAISED.value,
-                "tool error",
-                {"tool_code": getattr(exc, "code", ToolErrorCode.EXECUTION_FAILED)},
-            )
-
-        # Sandbox violations and failures.
+        # Sandbox violations must be checked before generic ToolError
         if isinstance(exc, SandboxViolation):
             # The violation code is embedded in the exception message.
             # Use the violation_code helper if available.
@@ -366,7 +357,7 @@ VerificationErrorCode.STEP_UNREADABLE: FailureCode.MALFORMED_INPUT,
                 {},
             )
         if isinstance(exc, ToolError):
-            # Already handled specific subclasses above, but catch any remaining.
+            # Generic ToolError fallback.
             return (
                 FailureCategory.TOOL_EXECUTION_FAILED.value,
                 FailureCode.TOOL_RAISED.value,

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from atlas.failure import FailureRecord, FailureRepo
 from atlas.failure.classify import FailureClassifier
+from atlas.failure.types import CODE_TO_CATEGORY, FailureCategory, is_recoverable
 from atlas.security.policy import DenyReason, Operation, Resource
 from atlas.storage.repositories import ProvenanceRepo
 
@@ -124,6 +125,91 @@ class FailureService:
                 classification["category"],
                 classification["code"],
                 classification["retryable"],
+            )
+            return failure_id
+
+    def record_failure_code(
+        self,
+        session_token: object,
+        *,
+        execution_id: int,
+        code: str,
+        detail: str,
+        plan_step_id: int | None = None,
+        invocation_id: str | None = None,
+    ) -> int:
+        """Record a classified failure for an execution whose code is known.
+
+        For findings that are not exceptions -- a verifier's FAIL verdict being
+        the case that matters. The category is looked up from the closed
+        vocabulary, so this cannot be used to publish a category of the caller's
+        choosing.
+        """
+
+        identity = self._auth.authenticate(session_token)
+        eid = self._auth._as_id(execution_id, Resource.EXECUTION)
+
+        with self._auth._db.transaction() as conn:
+            # Verify ownership of the execution's task.
+            exec_row = self._auth._executions.get(conn, eid)
+            if exec_row is None:
+                self._auth._deny(
+                    identity, Resource.EXECUTION, Operation.CREATE, DenyReason.RESOURCE_NOT_OWNED
+                )
+            task_id = int(exec_row["task_id"])
+            self._auth._require_owned_task(
+                conn,
+                identity,
+                task_id,
+                resource=Resource.FAILURE,
+                operation=Operation.CREATE,
+            )
+
+            # Look up category from code.
+            category = CODE_TO_CATEGORY.get(code, FailureCategory.INTERNAL_ERROR.value)
+
+            # Write the failure row.
+            failure_id = self._failures.create(
+                conn,
+                execution_id=eid,
+                category=category,
+                code=code,
+                detail=detail,
+                detail_json=None,
+                plan_step_id=plan_step_id,
+                invocation_id=invocation_id,
+                error_code=code,
+                retryable=1 if is_recoverable(category) else 0,
+            )
+
+            # Append a provenance event for the failure.
+            self._provenance.record_event(
+                conn,
+                task_id=task_id,
+                execution_id=eid,
+                plan_id=None,
+                plan_step_id=plan_step_id,
+                tool_id=None,
+                invocation_id=invocation_id,
+                event_type="failure_recorded",
+                actor="failure_classifier",
+                detail={
+                    "failure_id": failure_id,
+                    "category": category,
+                    "code": code,
+                    "retryable": is_recoverable(category),
+                },
+            )
+
+            logger.info(
+                "failure recorded user_id=%s task_id=%s execution_id=%s "
+                "category=%s code=%s retryable=%s",
+                identity.user_id,
+                task_id,
+                eid,
+                category,
+                code,
+                is_recoverable(category),
             )
             return failure_id
 

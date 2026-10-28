@@ -94,6 +94,46 @@ def _text_result(text: str) -> dict:
     }
 
 
+class _StubDispatcher:
+    """Returns a caller-supplied result so the stored bytes can be controlled.
+
+    Tests that need the recorded result to be *wrong* cannot get there through a
+    real tool, because a real tool returns the right answer. Writing the
+    executor's output directly is the honest way to set up a corrupted record.
+    """
+
+    def __init__(self, result: dict) -> None:
+        self._result = dict(result)
+        self.calls = 0
+
+    def dispatch(
+        self,
+        session_token,
+        *,
+        tool_id,
+        task_id,
+        arguments,
+        execution_id=None,
+        plan_id=None,
+        plan_step_id=None,
+        invocation_id=None,
+    ):  # type: ignore[no-untyped-def]
+        from atlas.tools.dispatch import ToolInvocation
+
+        self.calls += 1
+        return ToolInvocation(
+            tool_id=str(tool_id),
+            tool_version="1.0.0",
+            capability=str(tool_id),
+            determinism="deterministic",
+            user_id=1,
+            task_id=int(task_id),
+            result=self._result,
+            record={},
+            provenance_event_id=1,
+        )
+
+
 class TestPhase18E2E:
     """Phase 18 complete end-to-end tests."""
 
@@ -209,7 +249,6 @@ class TestPhase18E2E:
         )
 
         # Execute with wrong result (tampered)
-        from tests.test_verifier import _StubDispatcher
         wrong_dispatcher = _StubDispatcher({"char_count": 999, "line_count": 1, "word_count": 1})
         executor = ExecutorService(authz, wrong_dispatcher)
         outcome = executor.execute(alice, task)

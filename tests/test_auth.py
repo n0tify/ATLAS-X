@@ -211,15 +211,14 @@ def test_change_password_wrong_old_rejected(tmp_path) -> None:
     svc.register("michael", "correct-horse-battery")
     result = svc.login("michael", "correct-horse-battery")
     with pytest.raises(AuthenticationFailed):
-        svc.change_password(result["user"]["id"], "not-the-password", "new-password-1")
+        svc.change_password(result["token"], "not-the-password", "new-password-1")
 
 
 def test_change_password_then_old_password_fails(tmp_path) -> None:
     svc = _service(tmp_path)
     svc.register("nadia", "correct-horse-battery")
     result = svc.login("nadia", "correct-horse-battery")
-    user_id = result["user"]["id"]
-    svc.change_password(user_id, "correct-horse-battery", "brand-new-password-9")
+    svc.change_password(result["token"], "correct-horse-battery", "brand-new-password-9")
     with pytest.raises(AuthenticationFailed):
         svc.login("nadia", "correct-horse-battery")
     assert svc.login("nadia", "brand-new-password-9")["user"]["username"] == "nadia"
@@ -538,8 +537,7 @@ def test_change_password_accepts_five_character_password(tmp_path) -> None:
     svc = _service(tmp_path)
     svc.register("alice", "correct-horse-battery")
     result = svc.login("alice", "correct-horse-battery")
-    user_id = result["user"]["id"]
-    svc.change_password(user_id, "correct-horse-battery", "five5")
+    svc.change_password(result["token"], "correct-horse-battery", "five5")
     assert svc.login("alice", "five5")["user"]["username"] == "alice"
 
 
@@ -548,6 +546,6 @@ def test_change_password_refuses_password_below_minimum(tmp_path) -> None:
     svc.register("alice", "correct-horse-battery")
     result = svc.login("alice", "correct-horse-battery")
     with pytest.raises(PasswordRejected) as exc:
-        svc.change_password(result["user"]["id"], "correct-horse-battery", "four")
+        svc.change_password(result["token"], "correct-horse-battery", "four")
     assert str(exc.value) == "Password must be at least 5 characters."
     assert svc.login("alice", "correct-horse-battery")["user"]["username"] == "alice"

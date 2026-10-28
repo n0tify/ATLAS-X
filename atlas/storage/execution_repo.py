@@ -65,7 +65,7 @@ class ExecutionRepo:
         conn: sqlite3.Connection,
         *,
         task_id: int,
-        plan_id: int,
+        plan_id: int | None,
         plan_step_id: int | None,
         tool_id: str | None,
         invocation_id: str | None,

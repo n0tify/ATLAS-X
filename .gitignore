@@ -28,3 +28,50 @@ data/
 # Local experiment outputs
 experiments/output/
 reports/generated/
+
+# Backend logs
+*.log
+
+# Browser cookies
+cookies*.txt
+
+# Test files with credentials
+test_api.py
+check_tasks.py
+test_workflow.py
+
+# Temporary diagnostic output and local snapshots
+*_out.txt
+*_err.txt
+.auth_out.txt
+.full_out.txt
+.pytest_out.txt
+e2e_token.txt
+e2e_api.py
+frontend/devstorage.json
+frontend/e2e_login.png
+frontend/e2e_*.py
+frontend/mk_*.py
+frontend/codegen.txt
+mdlist.txt
+nul
+
+backend_err*.txt
+backend_out*.txt
+frontend/frontend_err*.txt
+frontend/frontend_out*.txt
+frontend/pw_*.txt
+# Local IDE / agent workspace
+.trae/
+# Generated benchmark outputs and local experiment databases
+benchmarks/atlas_bench/results/
+benchmarks/atlas_bench/**/*.db
+
+# Generated package metadata
+atlas_x.egg-info/
+*.egg-info/
+
+# Frontend dev-server logs and Playwright credential dump
+frontend.err
+frontend.out
+frontend/.pw.txt

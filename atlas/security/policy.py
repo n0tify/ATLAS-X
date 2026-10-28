@@ -115,7 +115,7 @@ PERMITTED_OPERATIONS: MappingProxyType[Resource, frozenset[Operation]] = Mapping
         ),
         Resource.ARTIFACT: frozenset({Operation.READ}),
         Resource.VERIFICATION: frozenset({Operation.READ, Operation.CREATE}),
-        Resource.FAILURE: frozenset({Operation.READ}),
+        Resource.FAILURE: frozenset({Operation.READ, Operation.CREATE}),
         Resource.RECOVERY_ATTEMPT: frozenset({Operation.READ}),
         Resource.PROVENANCE_EVENT: frozenset({Operation.READ}),
         Resource.EVALUATION_RUN: frozenset(),

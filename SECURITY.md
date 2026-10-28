@@ -182,8 +182,7 @@ ATLAS-X does **not** guarantee:
 - Isolation from code that holds a database connection. Any component able to
   execute SQL directly can bypass every owner predicate. Python-level trust, not
   authorization, is the outer boundary inside the process.
-- Complete log redaction at runtime: `SecretsRedactionFilter` exists but is not
-  yet attached to application log handlers.
+- Complete log redaction at runtime: `SecretsRedactionFilter` is attached to the root logger handler at startup via `configure_logging`. Redaction covers configured secret values only.
 - Containment of a tool body from *code inside ATLAS-X*. `ToolDefinition.implementation`
   is still a plain Python attribute on the host side, so code that already holds a
   `ToolRegistry` can call a body in-process and skip both dispatch and the

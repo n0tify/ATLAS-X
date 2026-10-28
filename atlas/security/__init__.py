@@ -1,5 +1,6 @@
 """Log redaction and the authorization boundary for user-owned data."""
 
+from atlas.logging_config import configure_logging, get_logger
 from atlas.security.errors import (
     AuthorizationError,
     InvalidAuthorizationRequest,
@@ -25,6 +26,8 @@ from atlas.security.service import AuthorizationService
 
 __all__ = [
     "SecretsRedactionFilter",
+    "configure_logging",
+    "get_logger",
     "AuthorizationService",
     "Identity",
     "IdentityResolver",

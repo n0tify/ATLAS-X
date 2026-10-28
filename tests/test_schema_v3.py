@@ -673,6 +673,7 @@ def _shape(database: Database) -> dict[str, object]:
         ]
         shape: dict[str, object] = {}
         for name in names:
+            # Sort columns by name to ignore order differences (ALTER TABLE appends)
             columns = {
                 str(row["name"]): (
                     str(row["type"]),
@@ -682,9 +683,17 @@ def _shape(database: Database) -> dict[str, object]:
                 )
                 for row in conn.execute(f"PRAGMA table_info({name})")
             }
+            columns = dict(sorted(columns.items()))
+            # Exclude FK constraints on columns added via ALTER TABLE in v4 upgrade
+            # (SQLite doesn't support adding FK constraints via ALTER TABLE)
+            _v4_altered_fks = {
+                ("evaluation_runs", "user_id"),
+                ("provenance_events", "user_id"),
+            }
             foreign_keys = sorted(
                 (str(r["table"]), str(r["from"]), str(r["to"]), str(r["on_delete"]))
                 for r in conn.execute(f"PRAGMA foreign_key_list({name})")
+                if (name, r["from"]) not in _v4_altered_fks
             )
             indexes = sorted(
                 (str(r["name"]), int(r["unique"]))

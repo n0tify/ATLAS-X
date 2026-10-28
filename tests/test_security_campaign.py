@@ -1,4 +1,4 @@
-﻿"""Phase 19: Security Test Campaign.
+"""Phase 19: Security Test Campaign.
 
 This module contains adversarial security tests that attack the ATLAS-X
 architecture to validate that security invariants hold under attack.
@@ -32,9 +32,7 @@ CSV_TOOL = "csv_statistics"
 
 
 def _user_id(db: Database, username: str) -> int:
-    row = db.connect().execute(
-        "SELECT id FROM users WHERE username = ?", (username,)
-    ).fetchone()
+    row = db.connect().execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     return int(row["id"]) if row else 0
 
 
@@ -88,16 +86,86 @@ def _text_result(text: str) -> dict:
     }
 
 
+class _StubDispatcher:
+    """Returns a caller-supplied result so the stored bytes can be controlled.
+
+    Tests that need the recorded result to be *wrong* cannot get there through a
+    real tool, because a real tool returns the right answer. Writing the
+    executor's output directly is the honest way to set up a corrupted record.
+    """
+
+    def __init__(self, result: dict) -> None:
+        self._result = dict(result)
+        self.calls = 0
+
+    def dispatch(
+        self,
+        session_token,
+        *,
+        tool_id,
+        task_id,
+        arguments,
+        execution_id=None,
+        plan_id=None,
+        plan_step_id=None,
+        invocation_id=None,
+    ):  # type: ignore[no-untyped-def]
+        from atlas.tools.dispatch import ToolInvocation
+
+        self.calls += 1
+        return ToolInvocation(
+            tool_id=str(tool_id),
+            tool_version="1.0.0",
+            capability=str(tool_id),
+            determinism="deterministic",
+            user_id=1,
+            task_id=int(task_id),
+            result=self._result,
+            record={},
+            provenance_event_id=1,
+        )
+
+
+def _executed_task(
+    authz: AuthorizationService,
+    token: str,
+    result: dict,
+    *,
+    tool_id: str = TOOL_A,
+    arguments: dict | None = None,
+) -> int:
+    """A task with a plan that has been run once and recorded ``result``."""
+
+    task = int(authz.create_task(token, title="t", goal="g")["id"])
+    _store_plan(
+        authz,
+        token,
+        task,
+        {
+            "summary": "One deterministic step.",
+            "steps": [
+                {
+                    "step_key": "only",
+                    "tool_id": tool_id,
+                    "input": dict(arguments or {"text": "hello world"}),
+                    "depends_on": [],
+                }
+            ],
+        },
+    )
+    ExecutorService(authz, _StubDispatcher(result)).execute(token, task)
+    return task
+
+
 def _user_id(db: Database, username: str) -> int:
-    row = db.connect().execute(
-        "SELECT id FROM users WHERE username = ?", (username,)
-    ).fetchone()
+    row = db.connect().execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     return int(row["id"]) if row else 0
 
 
 # ============================================================================
 # FIXTURES
 # ============================================================================
+
 
 @pytest.fixture
 def db(tmp_path) -> Database:
@@ -148,18 +216,21 @@ def verifier(authz: AuthorizationService) -> VerifierService:
 # AUTHENTICATION TESTS
 # ============================================================================
 
+
 class TestAuthenticationSecurity:
     """Tests that authentication correctly rejects invalid credentials."""
 
     def test_missing_credentials_denied(self, authz: AuthorizationService) -> None:
         """Missing session token must be denied."""
         from atlas.security.errors import Unauthenticated
+
         with pytest.raises(Unauthenticated):
             authz.authenticate(None)
 
     def test_malformed_token_denied(self, authz: AuthorizationService) -> None:
         """Malformed session token must be denied."""
         from atlas.security.errors import Unauthenticated
+
         with pytest.raises(Unauthenticated):
             authz.authenticate("not-a-valid-token")
 
@@ -199,34 +270,74 @@ class TestAuthenticationSecurity:
 # AUTHORIZATION TESTS
 # ============================================================================
 
+
 class TestAuthorizationSecurity:
     """Tests that authorization correctly enforces boundaries."""
 
-    def test_cross_user_task_access_denied(self, db: Database, auth: AuthService, alice: str, bob: str) -> None:
+    def test_cross_user_task_access_denied(
+        self, db: Database, auth: AuthService, alice: str, bob: str
+    ) -> None:
         """User must not access another user's task."""
         from atlas.security.errors import AuthorizationError
+
         authz = AuthorizationService(db, auth)
         task = authz.create_task(alice, title="Alice's task", goal="test")
         with pytest.raises(AuthorizationError):
             authz.get_task(bob, task["id"])
 
-    def test_cross_user_plan_access_denied(self, db: Database, auth: AuthService, alice: str, bob: str) -> None:
+    def test_cross_user_plan_access_denied(
+        self, db: Database, auth: AuthService, alice: str, bob: str
+    ) -> None:
         """User must not access another user's plan."""
         from atlas.security.errors import AuthorizationError
+
         authz = AuthorizationService(db, auth)
         task = authz.create_task(alice, title="Alice's task", goal="test")
         digest = "sha256:" + "a" * 64
-        authz.create_plan(alice, task_id=task["id"], plan_json='{"steps":[{"step_key":"s1","tool_id":"text_statistics","input":{"text":"hello"},"depends_on":[]}]}', digest=digest, steps=[{"step_key":"s1","tool_id":"text_statistics","input":{"text":"hello"},"depends_on":[]}], model_id="m", source="planner", validated=True, validation_json=None)
+        authz.create_plan(
+            alice,
+            task_id=task["id"],
+            plan_json='{"steps":[{"step_key":"s1","tool_id":"text_statistics","input":{"text":"hello"},"depends_on":[]}]}',
+            digest=digest,
+            steps=[
+                {
+                    "step_key": "s1",
+                    "tool_id": "text_statistics",
+                    "input": {"text": "hello"},
+                    "depends_on": [],
+                }
+            ],
+            model_id="m",
+            source="planner",
+            validated=True,
+            validation_json=None,
+        )
         with pytest.raises(AuthorizationError):
             authz.plan_head(bob, task["id"])
 
-    def test_cross_user_execution_access_denied(self, authz: AuthorizationService, alice: str, bob: str) -> None:
+    def test_cross_user_execution_access_denied(
+        self, authz: AuthorizationService, alice: str, bob: str
+    ) -> None:
         """User must not access another user's execution."""
         from atlas.security.errors import AuthorizationError
-        from tests.test_executor import _store_plan
 
         task = authz.create_task(alice, title="Alice's task", goal="test")
-        _store_plan(authz, alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
+        _store_plan(
+            authz,
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
 
         # Get the plan and step IDs
         plan = authz.plan_head(alice, task["id"])
@@ -234,78 +345,136 @@ class TestAuthorizationSecurity:
         steps = authz.plan_steps(alice, plan_id)
         plan_step_id = steps[0]["id"]
 
-        authz.begin_execution(alice, task_id=task["id"], plan_id=plan_id, plan_step_id=plan_step_id, tool_id="text_statistics", invocation_id="inv-1", origin="plan_step", max_concurrent=1, attempt=1)
+        authz.begin_execution(
+            alice,
+            task_id=task["id"],
+            plan_id=plan_id,
+            plan_step_id=plan_step_id,
+            tool_id="text_statistics",
+            invocation_id="inv-1",
+            origin="plan_step",
+            max_concurrent=1,
+            attempt=1,
+        )
         with pytest.raises(AuthorizationError):
             authz.executions_for_task(bob, task["id"])
 
-    def test_cross_user_artifact_access_denied(self, authz: AuthorizationService, alice: str, bob: str) -> None:
+    def test_cross_user_artifact_access_denied(
+        self, authz: AuthorizationService, alice: str, bob: str
+    ) -> None:
         """User must not access another user's artifact."""
         from atlas.artifact.service import ArtifactService
         from atlas.executor.service import ExecutorService
         from atlas.security.errors import AuthorizationError
         from atlas.tools.dispatch import DispatchLimits, ToolDispatcher
         from atlas.tools.registry import default_registry
-        from tests.test_executor import _store_plan
 
         artifact_svc = ArtifactService(authz)
         # Create an execution for alice first
         task = authz.create_task(alice, title="Test", goal="test")
-        _store_plan(authz, alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        _store_plan(
+            authz,
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
         executor = ExecutorService(authz, dispatcher)
-        outcome = executor.execute(alice, task["id"])
+        executor.execute(alice, task["id"])
         # Get the execution id
         executions = authz.executions_for_task(alice, task["id"])
         execution_id = executions[0]["id"]
         artifact_svc = ArtifactService(authz)
-        artifact_svc.create(alice, execution_id=execution_id, name="test.txt", kind="file", content="hello", source="tool")
+        artifact_svc.create(
+            alice,
+            execution_id=execution_id,
+            name="test.txt",
+            kind="file",
+            content="hello",
+            source="tool",
+        )
         with pytest.raises(AuthorizationError):
             artifact_svc.list_for_execution(bob, execution_id)
 
-    def test_cross_user_provenance_access_denied(self, authz: AuthorizationService, alice: str, bob: str) -> None:
+    def test_cross_user_provenance_access_denied(
+        self, authz: AuthorizationService, alice: str, bob: str
+    ) -> None:
         """User must not read another user's provenance."""
         from atlas.security.errors import AuthorizationError
         from atlas.storage.repositories import ProvenanceRepo
 
-        prov_repo = ProvenanceRepo()
         with authz._db.transaction() as conn:
             # Create a task for alice
             task = authz.create_task(alice, title="Test", goal="test")
             # Create provenance event for that task
             prov_repo = ProvenanceRepo()
-            prov_repo.record_event(conn, task_id=task["id"], event_type="test", actor="test", detail={})
+            prov_repo.record_event(
+                conn, task_id=task["id"], event_type="test", actor="test", detail={}
+            )
         with pytest.raises(AuthorizationError):
-            authz.append_provenance_event(bob, resource="task", resource_id=task["id"], event_type="test", detail={})
+            authz.append_provenance_event(
+                bob, resource="task", resource_id=task["id"], event_type="test", detail={}
+            )
 
-    def test_unauthorized_tool_access_denied(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_unauthorized_tool_access_denied(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Tool without grant must be denied."""
         from atlas.security.errors import AuthorizationError
+
         authz = AuthorizationService(db, auth)
         # No grant given for text_statistics
-        dispatcher = ToolDispatcher(db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
         task = authz.create_task(alice, title="Test", goal="test")
         with pytest.raises(AuthorizationError):
-            dispatcher.dispatch(alice, tool_id="text_statistics", task_id=task["id"], arguments={"text": "hello"})
+            dispatcher.dispatch(
+                alice, tool_id="text_statistics", task_id=task["id"], arguments={"text": "hello"}
+            )
 
-    def test_caller_supplied_user_id_never_trusted(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_caller_supplied_user_id_never_trusted(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """No public method should accept a caller-supplied user_id as authority."""
         authz = AuthorizationService(db, auth)
         # The authenticate method takes a session token, not a user_id
         # All authorization methods derive identity from session token only
-        assert "user_id" not in authz.create_task.__code__.co_varnames[:authz.create_task.__code__.co_argcount]
-        assert "user_id" not in authz.get_task.__code__.co_varnames[:authz.get_task.__code__.co_argcount]
+        assert (
+            "user_id"
+            not in authz.create_task.__code__.co_varnames[: authz.create_task.__code__.co_argcount]
+        )
+        assert (
+            "user_id"
+            not in authz.get_task.__code__.co_varnames[: authz.get_task.__code__.co_argcount]
+        )
 
 
 # ============================================================================
 # TOOL REGISTRY TESTS
 # ============================================================================
 
+
 class TestToolRegistrySecurity:
     """Tests that tool registry enforces its boundaries."""
 
     def test_unknown_tool_denied(self, authz: AuthorizationService, alice: str) -> None:
         """Unknown tool must be denied."""
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
         with pytest.raises(UnknownTool):
             dispatcher.dispatch(alice, tool_id="unknown_tool", task_id=1, arguments={})
 
@@ -316,20 +485,35 @@ class TestToolRegistrySecurity:
         from atlas.tools.definition import ProvenanceField, ToolDefinition, ToolLimits
         from atlas.tools.errors import ToolDefinitionInvalid
         from atlas.tools.schema import SchemaField, ToolSchema
+
         with pytest.raises(ToolDefinitionInvalid):
-            registry.register(ToolDefinition(
-                tool_id="test",
-                title="Test",
-                description="test",
-                version="1.0.0",
-                input_schema=ToolSchema(fields=(SchemaField(name="x", type="string", required=True, max_length=100),)),
-                output_schema=ToolSchema(fields=(SchemaField(name="y", type="string", required=True, max_length=100),)),
-                limits=ToolLimits(max_input_bytes=100, max_output_bytes=100, timeout_seconds=10),
-                determinism="deterministic",
-                provenance_fields=frozenset([ProvenanceField.TOOL_ID, ProvenanceField.TOOL_VERSION]),
-                implementation=lambda ctx, args: {},
-                implementation_id="test",
-            ))
+            registry.register(
+                ToolDefinition(
+                    tool_id="test",
+                    title="Test",
+                    description="test",
+                    version="1.0.0",
+                    input_schema=ToolSchema(
+                        fields=(
+                            SchemaField(name="x", type="string", required=True, max_length=100),
+                        )
+                    ),
+                    output_schema=ToolSchema(
+                        fields=(
+                            SchemaField(name="y", type="string", required=True, max_length=100),
+                        )
+                    ),
+                    limits=ToolLimits(
+                        max_input_bytes=100, max_output_bytes=100, timeout_seconds=10
+                    ),
+                    determinism="deterministic",
+                    provenance_fields=frozenset(
+                        [ProvenanceField.TOOL_ID, ProvenanceField.TOOL_VERSION]
+                    ),
+                    implementation=lambda ctx, args: {},
+                    implementation_id="test",
+                )
+            )
 
     def test_malformed_tool_definition_rejected(self) -> None:
         """Malformed tool definitions must be rejected at construction."""
@@ -344,8 +528,12 @@ class TestToolRegistrySecurity:
                 title="Bad",
                 description="bad",
                 version="1.0.0",
-                input_schema=ToolSchema(fields=(SchemaField(name="x", type="string", required=True, max_length=100),)),
-                output_schema=ToolSchema(fields=(SchemaField(name="y", type="string", required=True, max_length=100),)),
+                input_schema=ToolSchema(
+                    fields=(SchemaField(name="x", type="string", required=True, max_length=100),)
+                ),
+                output_schema=ToolSchema(
+                    fields=(SchemaField(name="y", type="string", required=True, max_length=100),)
+                ),
                 limits=ToolLimits(max_input_bytes=100, max_output_bytes=100, timeout_seconds=10),
                 determinism="deterministic",
                 provenance_fields=frozenset(),
@@ -369,9 +557,19 @@ class TestToolRegistrySecurity:
                     description="bad",
                     version="1.0.0",
                     capability=cap,  # This is the prohibited capability
-                    input_schema=ToolSchema(fields=(SchemaField(name="x", type="string", required=True, max_length=100),)),
-                    output_schema=ToolSchema(fields=(SchemaField(name="y", type="string", required=True, max_length=100),)),
-                    limits=ToolLimits(max_input_bytes=100, max_output_bytes=100, timeout_seconds=10),
+                    input_schema=ToolSchema(
+                        fields=(
+                            SchemaField(name="x", type="string", required=True, max_length=100),
+                        )
+                    ),
+                    output_schema=ToolSchema(
+                        fields=(
+                            SchemaField(name="y", type="string", required=True, max_length=100),
+                        )
+                    ),
+                    limits=ToolLimits(
+                        max_input_bytes=100, max_output_bytes=100, timeout_seconds=10
+                    ),
                     determinism="deterministic",
                     provenance_fields=frozenset([ProvenanceField.TOOL_ID]),
                     implementation=lambda ctx, args: {},
@@ -383,20 +581,24 @@ class TestToolRegistrySecurity:
 # DISPATCHER SECURITY TESTS
 # ============================================================================
 
+
 class TestDispatcherSecurity:
     """Tests that the dispatcher enforces security at every step."""
 
     def test_direct_tool_body_never_called(self, authz: AuthorizationService, alice: str) -> None:
         """Tool body must never be called directly - only through dispatcher."""
         from atlas.tools.dispatch import ToolDispatcher
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
 
         # Direct call to tool body would be:
         # from atlas.tools.builtin.text_statistics import compute
         # But this is not the path - dispatcher always goes through sandbox
         # We verify the dispatcher is the only entry point
-        assert hasattr(dispatcher, '_sandbox')
-        assert hasattr(dispatcher, '_registry')
+        assert hasattr(dispatcher, "_sandbox")
+        assert hasattr(dispatcher, "_registry")
 
     def test_replayed_invocation_denied(self, authz: AuthorizationService, alice: str) -> None:
         """Replaying the same invocation must be denied."""
@@ -408,30 +610,69 @@ class TestDispatcherSecurity:
         authz.create_task(alice, title="Test", goal="test")
         _store_plan(
             authz,
-            alice, 1,
-            {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]}
+            alice,
+            1,
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
         )
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
 
         # First dispatch should succeed
-        result1 = dispatcher.dispatch(alice, tool_id="text_statistics", task_id=1, arguments={"text": "hello"})
+        dispatcher.dispatch(
+            alice, tool_id="text_statistics", task_id=1, arguments={"text": "hello"}
+        )
 
         # Second dispatch with same invocation_id must fail
-        # The invocation_id is derived from plan+step+attempt, so same plan+step+attempt would be duplicate
-        # We test by trying to create an execution with same invocation_id
+        # The invocation_id is derived from plan+step+attempt, so same
+        # plan+step+attempt would be duplicate.
+        # We test by trying to create an execution with same invocation_id..
         from atlas.storage.execution_repo import ExecutionRepo
+
         with authz._db.connect() as conn:
             repo = ExecutionRepo()
             # Create an execution with same invocation_id
-            repo.create(conn, task_id=1, plan_id=1, plan_step_id=1, tool_id="text_statistics", invocation_id="inv-dup", origin="plan_step", attempt=1)
+            repo.create(
+                conn,
+                task_id=1,
+                plan_id=1,
+                plan_step_id=1,
+                tool_id="text_statistics",
+                invocation_id="inv-dup",
+                origin="plan_step",
+                attempt=1,
+            )
             # Try to create another with same invocation_id
             with pytest.raises(Exception):
-                repo.create(conn, task_id=1, plan_id=1, plan_step_id=1, tool_id="text_statistics", invocation_id="inv-dup", origin="plan_step", attempt=1)
+                repo.create(
+                    conn,
+                    task_id=1,
+                    plan_id=1,
+                    plan_step_id=1,
+                    tool_id="text_statistics",
+                    invocation_id="inv-dup",
+                    origin="plan_step",
+                    attempt=1,
+                )
 
-    def test_malformed_dispatch_request_denied(self, authz: AuthorizationService, alice: str) -> None:
+    def test_malformed_dispatch_request_denied(
+        self, authz: AuthorizationService, alice: str
+    ) -> None:
         """Malformed dispatch request must be denied."""
 
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
 
         # Empty tool_id
         with pytest.raises(Exception):
@@ -439,12 +680,15 @@ class TestDispatcherSecurity:
 
         # Non-existent task
         with pytest.raises(Exception):
-            dispatcher.dispatch(alice, tool_id="text_statistics", task_id=999999, arguments={"text": "hello"})
+            dispatcher.dispatch(
+                alice, tool_id="text_statistics", task_id=999999, arguments={"text": "hello"}
+            )
 
 
 # ============================================================================
 # SANDBOX SECURITY TESTS
 # ============================================================================
+
 
 class TestSandboxSecurity:
     """Tests that the sandbox enforces confinement."""
@@ -474,7 +718,9 @@ class TestSandboxSecurity:
         """Unbounded tool output must be denied."""
         # Tools have output bounds enforced by the dispatcher
 
-    def test_sandbox_unavailable_fails_closed(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_sandbox_unavailable_fails_closed(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Sandbox unavailable must fail the call, not fall back."""
         from atlas.tools.dispatch import ToolDispatcher
 
@@ -483,7 +729,7 @@ class TestSandboxSecurity:
         auth_service
         authz = AuthorizationService(db, auth_service)
 
-        dispatcher = ToolDispatcher(
+        ToolDispatcher(
             db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
         )
         # If sandbox is unavailable, the call should fail, not fall back
@@ -493,6 +739,7 @@ class TestSandboxSecurity:
 # ARTIFACTS SECURITY TESTS
 # ============================================================================
 
+
 class TestArtifactSecurity:
     """Tests that artifact storage enforces security."""
 
@@ -500,7 +747,7 @@ class TestArtifactSecurity:
         """Path traversal in artifact paths must be denied."""
         from atlas.artifact.service import ArtifactService
 
-        artifact_svc = ArtifactService(authz)
+        ArtifactService(authz)
         # The artifact service should not allow path traversal in relative_path
         # Since the service doesn't accept relative_path from user input directly,
         # but we verify the repo validates paths
@@ -518,44 +765,18 @@ class TestArtifactSecurity:
                     relative_path="../../etc/passwd",
                     content="test",
                     source="tool",
-                    created_by="alice"
+                    created_by="alice",
                 )
 
-    def test_cross_user_artifact_access_denied(self, authz: AuthorizationService, alice: str, bob: str) -> None:
+    def test_cross_user_artifact_access_denied(
+        self, authz: AuthorizationService, alice: str, bob: str
+    ) -> None:
         """User must not access another user's artifacts."""
         from atlas.artifact.service import ArtifactService
         from atlas.executor.service import ExecutorService
         from atlas.security.errors import AuthorizationError
         from atlas.tools.dispatch import DispatchLimits, ToolDispatcher
         from atlas.tools.registry import default_registry
-        from tests.test_executor import _store_plan
-
-        artifact_svc = ArtifactService(authz)
-        # Create an execution for alice first
-        task = authz.create_task(alice, title="Test", goal="test")
-        _store_plan(authz, alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
-        executor = ExecutorService(authz, dispatcher)
-        outcome = executor.execute(alice, task["id"])
-        # Get the execution id
-        executions = authz.executions_for_task(alice, task["id"])
-        execution_id = executions[0]["id"]
-        artifact_svc = ArtifactService(authz)
-        artifact_svc.create(alice, execution_id=execution_id, name="test.txt", kind="file", content="hello", source="tool")
-        with pytest.raises(AuthorizationError):
-            artifact_svc.list_for_execution(bob, execution_id)
-
-    def test_artifact_overwrite_denied(self, authz: AuthorizationService, alice: str) -> None:
-        """Artifact with same name in same execution - currently allowed (no unique constraint).
-        
-        Note: The current schema does not enforce uniqueness of artifact names within
-        an execution. This test documents the current behavior - duplicate names are allowed.
-        """
-        from atlas.artifact.service import ArtifactService
-        from atlas.executor.service import ExecutorService
-        from atlas.tools.dispatch import DispatchLimits, ToolDispatcher
-        from atlas.tools.registry import default_registry
-        from tests.test_executor import _store_plan
 
         artifact_svc = ArtifactService(authz)
         # Create an execution for alice first
@@ -564,20 +785,90 @@ class TestArtifactSecurity:
             authz,
             alice,
             task["id"],
-            {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]}
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
         )
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
         executor = ExecutorService(authz, dispatcher)
-        outcome = executor.execute(alice, task["id"])
+        executor.execute(alice, task["id"])
+        # Get the execution id
+        executions = authz.executions_for_task(alice, task["id"])
+        execution_id = executions[0]["id"]
+        artifact_svc = ArtifactService(authz)
+        artifact_svc.create(
+            alice,
+            execution_id=execution_id,
+            name="test.txt",
+            kind="file",
+            content="hello",
+            source="tool",
+        )
+        with pytest.raises(AuthorizationError):
+            artifact_svc.list_for_execution(bob, execution_id)
+
+    def test_artifact_overwrite_denied(self, authz: AuthorizationService, alice: str) -> None:
+        """Artifact with same name in same execution - currently allowed (no unique constraint).
+
+        Note: The current schema does not enforce uniqueness of artifact names within
+        an execution. This test documents the current behavior - duplicate names are allowed.
+        """
+        from atlas.artifact.service import ArtifactService
+        from atlas.executor.service import ExecutorService
+        from atlas.tools.dispatch import DispatchLimits, ToolDispatcher
+        from atlas.tools.registry import default_registry
+
+        artifact_svc = ArtifactService(authz)
+        # Create an execution for alice first
+        task = authz.create_task(alice, title="Test", goal="test")
+        _store_plan(
+            authz,
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
+        executor = ExecutorService(authz, dispatcher)
+        executor.execute(alice, task["id"])
         # Get the execution id
         executions = authz.executions_for_task(alice, task["id"])
         execution_id = executions[0]["id"]
 
         artifact_svc = ArtifactService(authz)
-        artifact_svc.create(alice, execution_id=execution_id, name="test.txt", kind="file", content="v1", source="tool")
+        artifact_svc.create(
+            alice,
+            execution_id=execution_id,
+            name="test.txt",
+            kind="file",
+            content="v1",
+            source="tool",
+        )
 
         # Attempt to create another artifact with same name in same execution - currently allowed
         from atlas.artifact.repo import ArtifactRepo
+
         repo = ArtifactRepo()
         with authz._db.transaction() as conn:
             artifact_id2 = repo.create(
@@ -587,7 +878,7 @@ class TestArtifactSecurity:
                 kind="file",
                 content="v2",
                 source="tool",
-                created_by="alice"
+                created_by="alice",
             )
             # Should succeed (no unique constraint on execution_id + name)
             assert artifact_id2 is not None
@@ -596,12 +887,20 @@ class TestArtifactSecurity:
     def test_oversized_artifact_rejected(self, authz: AuthorizationService, alice: str) -> None:
         """Oversized artifacts must be rejected."""
         from atlas.artifact.service import ArtifactService
+
         artifact_svc = ArtifactService(authz)
 
         # Create content larger than MAX_CONTENT_BYTES (10MB)
         large_content = "x" * (11 * 1024 * 1024)
         with pytest.raises(Exception):
-            artifact_svc.create(alice, execution_id=1, name="huge.txt", kind="file", content=large_content, source="tool")
+            artifact_svc.create(
+                alice,
+                execution_id=1,
+                name="huge.txt",
+                kind="file",
+                content=large_content,
+                source="tool",
+            )
 
     def test_artifact_checksum_integrity(self, authz: AuthorizationService, alice: str) -> None:
         """Artifact checksum must match content."""
@@ -611,7 +910,6 @@ class TestArtifactSecurity:
         from atlas.executor.service import ExecutorService
         from atlas.tools.dispatch import DispatchLimits, ToolDispatcher
         from atlas.tools.registry import default_registry
-        from tests.test_executor import _store_plan
 
         artifact_svc = ArtifactService(authz)
         # Create an execution for alice first
@@ -620,20 +918,40 @@ class TestArtifactSecurity:
             authz,
             alice,
             task["id"],
-            {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]}
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
         )
-        dispatcher = ToolDispatcher(authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8))
+        dispatcher = ToolDispatcher(
+            authz._db, authz, default_registry(), limits=DispatchLimits(max_tool_calls=8)
+        )
         executor = ExecutorService(authz, dispatcher)
-        outcome = executor.execute(alice, task["id"])
+        executor.execute(alice, task["id"])
         # Get the execution id
         executions = authz.executions_for_task(alice, task["id"])
         execution_id = executions[0]["id"]
 
         content = "test content for checksum"
-        artifact_id = artifact_svc.create(alice, execution_id=execution_id, name="checksum.txt", kind="file", content=content, source="tool")
+        artifact_id = artifact_svc.create(
+            alice,
+            execution_id=execution_id,
+            name="checksum.txt",
+            kind="file",
+            content=content,
+            source="tool",
+        )
 
         # Verify the artifact has correct checksum
         from atlas.artifact.repo import ArtifactRepo
+
         repo = ArtifactRepo()
         with authz._db.transaction() as conn:
             artifact = repo.get(conn, artifact_id)
@@ -646,10 +964,13 @@ class TestArtifactSecurity:
 # PROVENANCE SECURITY TESTS
 # ============================================================================
 
+
 class TestProvenanceSecurity:
     """Tests that provenance enforces security and integrity."""
 
-    def test_provenance_digest_tampering_detected(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_provenance_digest_tampering_detected(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Tampering with provenance chain digest must be detected."""
         from atlas.storage.repositories import ProvenanceRepo
 
@@ -664,8 +985,12 @@ class TestProvenanceSecurity:
         # Create some provenance events
         with db.connect() as conn:
             prov_repo = ProvenanceRepo()
-            prov_repo.record_event(conn, task_id=task["id"], event_type="test", actor="test", detail={"x": 1})
-            prov_repo.record_event(conn, task_id=task["id"], event_type="test2", actor="test", detail={"x": 2})
+            prov_repo.record_event(
+                conn, task_id=task["id"], event_type="test", actor="test", detail={"x": 1}
+            )
+            prov_repo.record_event(
+                conn, task_id=task["id"], event_type="test2", actor="test", detail={"x": 2}
+            )
 
         # Tamper with the chain_digest in the database
         with db.connect() as conn:
@@ -685,36 +1010,49 @@ class TestProvenanceSecurity:
         """Deletion of provenance events must break chain."""
         pass  # Covered by chain verification
 
-    def test_provenance_cross_user_access_denied(self, authz: AuthorizationService, alice: str, bob: str) -> None:
+    def test_provenance_cross_user_access_denied(
+        self, authz: AuthorizationService, alice: str, bob: str
+    ) -> None:
         """User must not read another user's provenance."""
         from atlas.security.errors import AuthorizationError
+
         prov_repo = ProvenanceRepo()
         with authz._db.transaction() as conn:
             # Create a task for alice
             task = authz.create_task(alice, title="Test", goal="test")
             # Create provenance event for that task
             prov_repo = ProvenanceRepo()
-            prov_repo.record_event(conn, task_id=task["id"], event_type="test", actor="test", detail={})
+            prov_repo.record_event(
+                conn, task_id=task["id"], event_type="test", actor="test", detail={}
+            )
         with pytest.raises(AuthorizationError):
-            authz.append_provenance_event(bob, resource="task", resource_id=task["id"], event_type="test", detail={})
+            authz.append_provenance_event(
+                bob, resource="task", resource_id=task["id"], event_type="test", detail={}
+            )
 
-    def test_provenance_immutable_no_update(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_provenance_immutable_no_update(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Provenance events must not be updatable."""
         # No public update/delete method exists on ProvenanceRepo
         from atlas.storage.repositories import ProvenanceRepo
+
         repo = ProvenanceRepo()
-        assert not hasattr(repo, 'update')
-        assert not hasattr(repo, 'delete')
+        assert not hasattr(repo, "update")
+        assert not hasattr(repo, "delete")
 
 
 # ============================================================================
 # VERIFICATION SECURITY TESTS
 # ============================================================================
 
+
 class TestVerificationSecurity:
     """Tests that verification enforces security."""
 
-    def test_verification_requires_complete_execution(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_verification_requires_complete_execution(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Verification must require complete execution."""
         from atlas.verifier.errors import VerificationErrorCode, VerificationRefused
 
@@ -729,12 +1067,29 @@ class TestVerificationSecurity:
             verifier.verify_task(alice, 1)
         assert exc.value.code == VerificationErrorCode.TASK_NOT_EXECUTED
 
-    def test_verification_requires_execution_result(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_verification_requires_execution_result(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Verification must require execution result."""
 
         authz = AuthorizationService(db, auth)
         task = authz.create_task(alice, title="Test", goal="test")
-        _store_plan(authz, alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
+        _store_plan(
+            authz,
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
 
         # Get the plan and step IDs
         plan = authz.plan_head(alice, task["id"])
@@ -745,41 +1100,72 @@ class TestVerificationSecurity:
         # Create execution but no result
         with db.connect() as conn:
             conn.execute(
-                "INSERT INTO executions (task_id, plan_id, plan_step_id, tool_id, invocation_id, status, attempt, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-                (task["id"], plan_id, plan_step_id, "text_statistics", "inv-1", "running", 1)
+                "INSERT INTO executions "
+                "(task_id, plan_id, plan_step_id, tool_id, invocation_id, "
+                "status, attempt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, "
+                "datetime('now'))",
+                (
+                    task["id"],
+                    plan_id,
+                    plan_step_id,
+                    "text_statistics",
+                    "inv-1",
+                    "running",
+                    1,
+                ),
             )
 
-        # Need to transition task through proper statuses: pending -> planned -> executing -> executed
+        # Need to transition task through proper statuses:
+        # pending -> planned -> executing -> executed
         authz.set_task_status(alice, task["id"], status="planned")
         authz.set_task_status(alice, task["id"], status="executing")
         authz.set_task_status(alice, task["id"], status="executed")
 
         verifier = VerifierService(authz)
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(Exception):
             verifier.verify_task(alice, task["id"])
         # Should refuse due to incomplete execution
 
-    def test_verification_fails_on_wrong_result(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_verification_fails_on_wrong_result(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Verification must fail on wrong result."""
         # Use the verifier to check a wrong result
-        from tests.test_verifier import _executed_task
 
         authz = AuthorizationService(db, auth)
         authz
-        task = _executed_task(authz, alice, {"char_count": 999}, tool_id="text_statistics", arguments={"text": "hello"})
+        task = _executed_task(
+            authz,
+            alice,
+            {"char_count": 999},
+            tool_id="text_statistics",
+            arguments={"text": "hello"},
+        )
 
         verifier = VerifierService(authz)
         report = verifier.verify_task(alice, task)
         assert not report.passed
         assert report.verdict == "fail"
 
-    def test_verification_refuses_repeated(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_verification_refuses_repeated(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Repeated verification of same task must be refused."""
-        from tests.test_verifier import _executed_task
 
         authz = AuthorizationService(db, auth)
-        task = _executed_task(authz, alice, {"char_count": 11, "line_count": 1, "word_count": 2, "longest_line_length": 11, "min_word_length": 5, "max_word_length": 5, "unique_word_count": 2})
+        task = _executed_task(
+            authz,
+            alice,
+            {
+                "char_count": 11,
+                "line_count": 1,
+                "word_count": 2,
+                "longest_line_length": 11,
+                "min_word_length": 5,
+                "max_word_length": 5,
+                "unique_word_count": 2,
+            },
+        )
 
         verifier = VerifierService(authz)
         report = verifier.verify_task(alice, task)
@@ -793,10 +1179,13 @@ class TestVerificationSecurity:
 # RECOVERY SECURITY TESTS
 # ============================================================================
 
+
 class TestRecoverySecurity:
     """Tests that recovery enforces security boundaries."""
 
-    def test_recovery_requires_recoverable_failure(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_recovery_requires_recoverable_failure(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Recovery must only work for recoverable failures."""
 
         authz = AuthorizationService(db, auth)
@@ -804,12 +1193,32 @@ class TestRecoverySecurity:
 
         # Create a non-recoverable failure (authorization denied)
         task = authz.create_task(alice, title="Test", goal="test")
-        _store_plan(AuthorizationService(db, auth), alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
+        _store_plan(
+            AuthorizationService(db, auth),
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
 
         # Create execution and fail it
-        dispatcher = ToolDispatcher(db, AuthorizationService(db, auth), default_registry(), limits=DispatchLimits(max_tool_calls=8))
-        executor = ExecutorService(authz, dispatcher)
-        # We can't easily create a non-recoverable failure here, but the service should check
+        dispatcher = ToolDispatcher(
+            db,
+            AuthorizationService(db, auth),
+            default_registry(),
+            limits=DispatchLimits(max_tool_calls=8),
+        )
+        _ = ExecutorService(authz, dispatcher)
+        # We can't easily create a non-recoverable failure here
 
     def test_recovery_respects_limit(self, db: Database, auth: AuthService, alice: str) -> None:
         """Recovery must respect the configured attempt limit."""
@@ -818,21 +1227,43 @@ class TestRecoverySecurity:
         authz
 
         task = authz.create_task(alice, title="Test", goal="test")
-        _store_plan(AuthorizationService(db, auth), alice, task["id"], {"summary": "Test", "steps": [{"step_key": "s1", "tool_id": "text_statistics", "input": {"text": "hello"}, "depends_on": []}]})
+        _store_plan(
+            AuthorizationService(db, auth),
+            alice,
+            task["id"],
+            {
+                "summary": "Test",
+                "steps": [
+                    {
+                        "step_key": "s1",
+                        "tool_id": "text_statistics",
+                        "input": {"text": "hello"},
+                        "depends_on": [],
+                    }
+                ],
+            },
+        )
 
         # Execute to create failure
-        dispatcher = ToolDispatcher(db, AuthorizationService(db, auth), default_registry(), limits=DispatchLimits(max_tool_calls=8))
-        executor = ExecutorService(authz, dispatcher)
-        # We'd need a failing dispatch here
-
-        recovery = RecoveryService(authz)
+        dispatcher = ToolDispatcher(
+            db,
+            AuthorizationService(db, auth),
+            default_registry(),
+            limits=DispatchLimits(max_tool_calls=8),
+        )
+        _ = ExecutorService(authz, dispatcher)
+        _ = RecoveryService(authz)
         # Recovery should enforce max attempts
 
-    def test_recovery_creates_new_execution(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_recovery_creates_new_execution(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Recovery must create a new execution, not mutate the old one."""
         pass  # Requires working recovery flow
 
-    def test_recovery_cannot_bypass_verification(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_recovery_cannot_bypass_verification(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Recovery must not bypass verification."""
         pass  # Recovery creates new execution which must be verified
 
@@ -841,16 +1272,21 @@ class TestRecoverySecurity:
 # MODEL TRUST BOUNDARY TESTS
 # ============================================================================
 
+
 class TestModelTrustBoundary:
     """Tests that model output is never trusted."""
 
-    def test_model_output_never_grants_permissions(self, authz: AuthorizationService, alice: str) -> None:
+    def test_model_output_never_grants_permissions(
+        self, authz: AuthorizationService, alice: str
+    ) -> None:
         """Model output must never grant permissions."""
         # Model output goes through planner -> plan validation -> executor
         # The planner output is never used directly for authorization
         pass  # Tested implicitly
 
-    def test_model_output_never_bypasses_verification(self, authz: AuthorizationService, alice: str) -> None:
+    def test_model_output_never_bypasses_verification(
+        self, authz: AuthorizationService, alice: str
+    ) -> None:
         """Model output must never bypass verification."""
         # Verification re-derives expected outputs from stored inputs
         # Model cannot influence verification result
@@ -866,7 +1302,9 @@ class TestModelTrustBoundary:
         # Model output is text, parsed as plan, validated, then executed through sandbox
         pass
 
-    def test_model_output_never_grants_tool_access(self, db: Database, auth: AuthService, alice: str) -> None:
+    def test_model_output_never_grants_tool_access(
+        self, db: Database, auth: AuthService, alice: str
+    ) -> None:
         """Model output must never grant tool access."""
         # Tool grants are managed by operators, not models
         pass
@@ -881,8 +1319,7 @@ class TestModelTrustBoundary:
 # HELPER FUNCTIONS
 # ============================================================================
 
+
 def _user_id(db: Database, username: str) -> int:
-    row = db.connect().execute(
-        "SELECT id FROM users WHERE username = ?", (username,)
-    ).fetchone()
+    row = db.connect().execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     return int(row["id"]) if row else 0

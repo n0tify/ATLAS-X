@@ -24,6 +24,19 @@ from typing import Any, Mapping
 USER_PUBLIC_FIELDS = ("id", "username", "created_at")
 
 
+__all__ = [
+    "USER_PUBLIC_FIELDS",
+    "ProvenanceEvent",
+    "ProvenanceVerificationError",
+    "ProvenanceVerificationCode",
+    "UserRepo",
+    "UserPreferencesRepo",
+    "SessionRepo",
+    "TaskRepo",
+    "ProvenanceRepo",
+]
+
+
 def _user_public(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in USER_PUBLIC_FIELDS}
 
@@ -204,6 +217,65 @@ class UserRepo:
         return cursor.rowcount
 
 
+class UserPreferencesRepo:
+    """Per-user persisted preferences: onboarding completion, a11y flags, theme."""
+
+    def _ensure_row(self, conn: sqlite3.Connection, user_id: int) -> None:
+        now = _utcnow()
+        conn.execute(
+            "INSERT OR IGNORE INTO user_preferences "
+            "(user_id, onboarding_completed, reduced_motion, high_contrast, "
+            "theme_mode, created_at, updated_at) "
+            "VALUES (?, 0, 0, 0, 'system', ?, ?)",
+            (user_id, now, now),
+        )
+
+    def get_all(self, conn: sqlite3.Connection, user_id: int) -> dict[str, Any]:
+        self._ensure_row(conn, user_id)
+        row = conn.execute(
+            "SELECT * FROM user_preferences WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return {
+                "user_id": user_id,
+                "onboarding_completed": 0,
+                "reduced_motion": 0,
+                "high_contrast": 0,
+                "theme_mode": "system",
+            }
+        data = dict(row)
+        data.pop("id", None)
+        return data
+
+    def get_onboarding_completed(self, conn: sqlite3.Connection, user_id: int) -> bool:
+        return bool(self.get_all(conn, user_id)["onboarding_completed"])
+
+    def mark_onboarding_completed(
+        self, conn: sqlite3.Connection, user_id: int, *, completed: bool = True
+    ) -> None:
+        self._ensure_row(conn, user_id)
+        conn.execute(
+            "UPDATE user_preferences SET onboarding_completed = ?, "
+            "updated_at = ? WHERE user_id = ?",
+            (1 if completed else 0, _utcnow(), user_id),
+        )
+
+    def set(self, conn: sqlite3.Connection, user_id: int, **fields: Any) -> None:
+        allowed = {"onboarding_completed", "reduced_motion", "high_contrast", "theme_mode"}
+        if not fields.keys() <= allowed:
+            invalid = sorted(fields.keys() - allowed)
+            raise ValueError(f"unrecognized preference fields: {invalid}")
+        self._ensure_row(conn, user_id)
+        if not fields:
+            return
+        assigns = ", ".join(f"{name} = ?" for name in fields)
+        values = list(fields.values()) + [_utcnow(), user_id]
+        conn.execute(
+            f"UPDATE user_preferences SET {assigns}, updated_at = ? WHERE user_id = ?",
+            values,
+        )
+
+
 class SessionRepo:
     def create(
         self,
@@ -221,12 +293,14 @@ class SessionRepo:
         return _last_insert_id(cursor)
 
     def get_valid(
-        self, conn: sqlite3.Connection, token_hash: str
+        self, conn: sqlite3.Connection, token_hash: str, now: str | None = None
     ) -> dict[str, Any] | None:
+        if now is None:
+            now = _utcnow()
         row = conn.execute(
             "SELECT id, user_id, created_at, expires_at "
-            "FROM sessions WHERE token_hash = ? AND revoked_at IS NULL LIMIT 1",
-            (token_hash,),
+            "FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ? LIMIT 1",
+            (token_hash, now),
         ).fetchone()
         return dict(row) if row is not None else None
 

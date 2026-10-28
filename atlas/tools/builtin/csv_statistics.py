@@ -277,7 +277,7 @@ def define() -> ToolDefinition:
         limits=ToolLimits(
             max_input_bytes=MAX_TEXT_CHARS * 4,
             max_output_bytes=2048,
-            timeout_seconds=5,
+            timeout_seconds=30,
         ),
         determinism=Determinism.DETERMINISTIC,
         provenance_fields=frozenset(ProvenanceField),

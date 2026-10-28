@@ -80,7 +80,7 @@ No model downloads are required to begin experimental work.
 
 | Property                       | Value                                        |
 |--------------------------------|----------------------------------------------|
-| Project directory              | `C:\Users\Anushka Srivastava\Desktop\ATLAS-X` |
+| Project directory              | `C:/path/to/ATLAS-X` |
 | Existing files/directories     | **0** (empty workspace)                     |
 | Git repository                 | No                                           |
 | Virtual environments           | None                                         |
